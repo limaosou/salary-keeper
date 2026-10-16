@@ -53,6 +53,36 @@ node test/e2e.js           # 无头浏览器 E2E：含模拟 GPS 自动签到/�
 - 系统省电策略可能挂起后台定位，自动打卡依赖页面保持前台；手动打卡不受影响
 - 页面本身无外部请求，可整体打进 APK assets
 
+## 部署到 GitHub Pages（免费 HTTPS，手机全功能）
+
+本目录已初始化为 git 仓库（main 分支，已含首次提交；`.workbuddy/` 等已在 .gitignore 排除）。
+
+**方式 A：网页拖拽（最简单，无需命令行）**
+
+1. 解压 `salary-keeper-deploy.zip`
+2. 打开 github.com → 右上角 **+** → New repository → 名称填 `salary-keeper` → 选 **Public**（免费版 Pages 要求公开；代码内无隐私数据）→ Create
+3. 点 **uploading an existing file** → 把解压出的 5 个文件/文件夹（index.html、css、js、README.md）拖进去 → Commit changes
+4. 仓库 **Settings → Pages → Source 选 `main` 分支、`/(root)` 目录 → Save**
+5. 等约 1 分钟，访问 `https://你的用户名.github.io/salary-keeper/`
+
+**方式 B：命令行（适合以后更新）**
+
+```bash
+winget install --id GitHub.cli        # 装 gh（只需一次）
+gh auth login                          # 浏览器授权（只需一次）
+gh repo create salary-keeper --public --source=. --push
+gh api -X POST repos/{owner}/salary-keeper/pages -f source[branch]=main -f source[path]=/
+```
+
+以后更新：改完文件 `git add ... && git commit -m "..." && git push`，约 1 分钟自动上线。
+
+**手机使用（iOS/Android 通用）**
+
+- Safari/Chrome 打开上面的地址 → 菜单选「添加到主屏幕」→ 桌面出现图标，点开全屏运行
+- 首次进【设置】填时薪等；**在公司门口时**点「📍 获取当前位置」配置围栏
+- 自动打卡需页面保持前台（锁屏/切 APP 会暂停计时，这是手机系统的限制，iOS 安卓皆然）
+- 换手机/换设备：旧设备【设置】导出备份 → 新设备导入
+
 ## 目录结构
 
 ```
