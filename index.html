@@ -91,12 +91,84 @@
         <div class="hero-cell"><span id="m-hours">0h</span><i>总工时</i></div>
         <div class="hero-cell"><span id="m-earn">0.00</span><i>已赚</i></div>
       </div>
+      <div id="att-stat" class="stat-chips"></div>
     </div>
+
+    <!-- 月历视图 -->
+    <div class="card">
+      <div class="card-title">本月日历 <i class="ct-sub">点击日期可补签 / 请假</i></div>
+      <div class="cal-head">
+        <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+      </div>
+      <div id="cal-grid" class="cal-grid"></div>
+      <div class="cal-legend">
+        <span class="lg s-normal">正常</span>
+        <span class="lg s-late">迟到</span>
+        <span class="lg s-early">早退</span>
+        <span class="lg s-missing">缺卡</span>
+        <span class="lg s-absent">旷工</span>
+        <span class="lg s-leave">请假</span>
+        <span class="lg s-rest">休息</span>
+        <span class="lg s-pending">待出勤</span>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-title">每日记录</div>
       <div id="att-list" class="att-list"></div>
     </div>
   </section>
+
+  <!-- 补签 / 请假 面板 -->
+  <div id="mk-mask" class="sheet-mask" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <b id="mk-title">2026-10-01</b>
+        <span id="mk-status" class="lg"></span>
+        <button id="mk-close" aria-label="关闭">✕</button>
+      </div>
+      <div class="sheet-body">
+        <div id="mk-detail" class="mk-block"></div>
+
+        <div class="mk-block">
+          <div class="mk-label">手工补签</div>
+          <div class="seg-ctrl">
+            <button class="seg-btn active" data-type="in">补签到</button>
+            <button class="seg-btn" data-type="out">补签退</button>
+          </div>
+          <div class="mk-row">
+            <label for="mk-time">补签时间</label>
+            <input type="time" id="mk-time" step="60">
+          </div>
+          <div class="mk-row">
+            <label for="mk-note">备注</label>
+            <input type="text" id="mk-note" maxlength="100" placeholder="如：忘打卡 / 门禁故障">
+          </div>
+          <button id="mk-submit" class="btn btn-primary">提交补签</button>
+          <div class="hint" id="mk-msg"></div>
+        </div>
+
+        <div class="mk-block">
+          <div class="mk-label">补签记录（可撤销）</div>
+          <div id="mk-logs" class="mk-logs"></div>
+        </div>
+
+        <div class="mk-block">
+          <div class="mk-label">请假 / 休息日</div>
+          <div class="mk-actions">
+            <select id="mk-leave-type">
+              <option value="연차">연차 年假</option>
+              <option value="병가">병가 病假</option>
+              <option value="경조사">경조사 婚丧假</option>
+              <option value="기타">기타 其他</option>
+            </select>
+            <button id="mk-leave" class="btn btn-ghost">登记请假</button>
+            <button id="mk-rest" class="btn btn-ghost">标记休息日</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ============ 月薪 ============ -->
   <section class="page" id="page-salary" hidden>
@@ -180,6 +252,26 @@
       <div class="field"><label>夜班时段起</label><input type="time" id="set-night-start"></div>
       <div class="field"><label>夜班时段止</label><input type="time" id="set-night-end"></div>
       <div class="hint">현장근로수당 = 시급 × 加班倍率 × 加班工时；夜班时段用于统计 야간근로시간</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">출퇴근기준 · 出勤判定</div>
+      <div class="field"><label>표준출근 标准上班</label><input type="time" id="set-work-start"></div>
+      <div class="field"><label>표준퇴근 标准下班</label><input type="time" id="set-work-end"></div>
+      <div class="field"><label>지각허용 迟到宽限（分钟）</label><input type="number" id="set-late-grace" step="1" min="0"></div>
+      <div class="field"><label>조퇴허용 早退宽限（分钟）</label><input type="number" id="set-early-grace" step="1" min="0"></div>
+      <div class="field">
+        <label>주휴일 每周休息日</label>
+        <div id="set-rest-weekdays" class="wd-picker"></div>
+      </div>
+      <div class="field">
+        <label>공휴일 法定节假日（逗号分隔）</label>
+        <input type="text" id="set-holidays" placeholder="2026-10-01,2026-10-02">
+      </div>
+      <div class="hint">
+        月历据此判定迟到/早退/缺卡/旷工。签到晚于「上班 + 宽限」记迟到，签退早于「下班 − 宽限」记早退；
+        休息日上班仍计加班。今天尚未打卡显示「待出勤」，不误判为旷工。
+      </div>
     </div>
 
     <div class="card">

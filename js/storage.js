@@ -67,6 +67,14 @@ const Store = (() => {
         { min: 30000000, max: null,      rate: 0.45, localRate: 0.10 }
       ],
 
+      // ===== 出勤判定规则（迟到/早退/请假，供月历状态用）=====
+      workStart: '09:00',        // 표준출근 标准上班时间
+      workEnd: '18:00',          // 표준퇴근 标准下班时间
+      lateGrace: 5,              // 지각허용 迟到宽限（分钟）
+      earlyGrace: 5,             // 조퇴허용 早退宽限（分钟）
+      restWeekdays: [0],         // 주휴일 每周休息日（0=周日）
+      holidays: [],              // 공휴일 法定节假日 ['2026-10-01', ...]
+
       // 夜班时段（用于统计 야간근로시간）
       nightStart: '22:00',
       nightEnd: '06:00',
@@ -86,6 +94,125 @@ const Store = (() => {
   };
 
   let state = load();
+
+  // 只读取某日记录：不存在返回 null，**不会创建**
+  // 月历要遍历整月每一天，若用 day() 会把空日期也落成记录，污染数据
+  /**
+   * 获取/新建某日考勤记录。
+   * 注意：这个函数会**创建**记录，查询场景请一律用 peek()，
+   * 否则遍历整月会把空日期也落成记录，污染数据。
+   */
+  const day = dateStr => {
+    if (!state.attendance[dateStr]) {
+      state.attendance[dateStr] = {
+        shiftType: 'day',
+        segments: [],
+        restMinutes: 60,
+        perf: 1.0,
+        isRestDay: false,
+        leave: null,     // { type, note } 请假
+        makeups: []      // [{ id, type:'in'|'out', time, note, at }] 补签留痕
+      };
+    }
+    const rec = state.attendance[dateStr];
+    // 兜底：兼容没有这些字段的历史数据
+    if (rec.leave === undefined) rec.leave = null;
+    if (!Array.isArray(rec.makeups)) rec.makeups = [];
+    if (!Array.isArray(rec.segments)) rec.segments = [];
+    return rec;
+  };
+
+  const peek = dateStr => state.attendance[dateStr] || null;
+
+  /** 某日是否已有落地的数据（有记录 / 请假 / 补签 / 标休息） */
+  const hasAnyRecord = dateStr => {
+    const rec = state.attendance[dateStr];
+    if (!rec) return false;
+    return rec.segments.length > 0 || !!rec.leave
+      || !!rec.isRestDay || (rec.makeups && rec.makeups.length > 0);
+  };
+
+  /** 写入请假（연차/병가/경조사/기타） */
+  const setLeave = (dateStr, { type = '연차', note = '' } = {}) => {
+    const rec = day(dateStr);
+    rec.leave = { type: String(type).slice(0, 20), note: String(note).slice(0, 100) };
+    save();
+    return true;
+  };
+
+  /** 取消请假 */
+  const clearLeave = dateStr => {
+    const rec = state.attendance[dateStr];
+    if (!rec || !rec.leave) return false;
+    rec.leave = null;
+    save();
+    return true;
+  };
+
+  /**
+   * 手工补签：带合法性校验，返回 { ok, msg }
+   * 校验点：日期合法 / 非未来 / 时间落在当日 / 不超前于此刻 / 不重复签到 / 签退须晚于签到
+   */
+  const addMakeup = (dateStr, { type, time, note = '', now = new Date() } = {}) => {
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return { ok: false, msg: '日期格式不正确' };
+    if (type !== 'in' && type !== 'out') return { ok: false, msg: '补签类型须为签到或签退' };
+
+    const dayStart = new Date(`${dateStr}T00:00:00`);
+    if (Number.isNaN(dayStart.getTime())) return { ok: false, msg: '日期无效' };
+    if (dayStart.getTime() > now.getTime()) return { ok: false, msg: '不能为未来日期补签' };
+
+    const timeMs = new Date(time).getTime();
+    if (Number.isNaN(timeMs)) return { ok: false, msg: '补签时间无效' };
+    const dayEnd = new Date(`${dateStr}T23:59:59`).getTime();
+    if (timeMs < dayStart.getTime() || timeMs > dayEnd) {
+      return { ok: false, msg: '补签时间须在当日 00:00–23:59 之间' };
+    }
+    if (timeMs > now.getTime()) return { ok: false, msg: '补签时间不能超过当前时刻' };
+
+    const rec = day(dateStr);
+    const segs = rec.segments.filter(sg => sg.in);
+
+    if (type === 'in') {
+      if (segs.length > 0) return { ok: false, msg: '当日已有签到记录，无需补签到' };
+      rec.segments.push({ in: new Date(timeMs).toISOString(), out: null, makeup: true });
+    } else {
+      const open = rec.segments.find(sg => sg.out === null) || null;
+      if (!open) return { ok: false, msg: '当日没有未签退的签到，无法补签退' };
+      const inMs = new Date(open.in).getTime();
+      if (timeMs <= inMs) return { ok: false, msg: '签退时间须晚于签到时间' };
+      open.out = new Date(timeMs).toISOString();
+      open.makeup = true;
+    }
+
+    rec.makeups.push({
+      id: 'mk' + now.getTime().toString(36) + Math.random().toString(36).slice(2, 6),
+      type,
+      time: new Date(timeMs).toISOString(),
+      note: String(note).slice(0, 100),
+      at: now.toISOString()
+    });
+    save();
+    return { ok: true, msg: type === 'in' ? '补签到成功' : '补签退成功' };
+  };
+
+  /** 撤销一条补签，并回滚它产生的打卡数据（补签必须是可撤销的） */
+  const removeMakeup = (dateStr, id) => {
+    const rec = state.attendance[dateStr];
+    if (!rec || !Array.isArray(rec.makeups)) return { ok: false, msg: '记录不存在' };
+    const idx = rec.makeups.findIndex(m => m.id === id);
+    if (idx < 0) return { ok: false, msg: '补签记录不存在' };
+
+    const mk = rec.makeups[idx];
+    const mkMs = new Date(mk.time).getTime();
+    if (mk.type === 'in') {
+      rec.segments = rec.segments.filter(sg => new Date(sg.in).getTime() !== mkMs);
+    } else {
+      rec.segments.forEach(sg => { if (sg.out && new Date(sg.out).getTime() === mkMs) sg.out = null; });
+    }
+    rec.makeups.splice(idx, 1);
+    save();
+    return { ok: true, msg: '已撤销该补签' };
+  };
 
   function load() {
     try {
@@ -124,6 +251,9 @@ const Store = (() => {
     get actualPaid() { return state.actualPaid; },
 
     save,
+    day,
+    peek,
+    hasAnyRecord,
 
     /** 覆盖某月考勤（键形如 'YYYY-MM'），用于按工资条导入/校准 */
     replaceMonth(monthKey, records) {
@@ -134,23 +264,14 @@ const Store = (() => {
       save();
     },
 
-    /** 获取/新建某日考勤记录 */
-    day(dateStr) {
-      if (!state.attendance[dateStr]) {
-        state.attendance[dateStr] = {
-          shiftType: 'day',
-          segments: [],
-          restMinutes: 60,
-          perf: 1.0,
-          isRestDay: false
-        };
-      }
-      return state.attendance[dateStr];
-    },
+    setLeave,
+    clearLeave,
+    addMakeup,
+    removeMakeup,
 
     /** 正在打卡中的 segment（out 为 null） */
     activeSegment(rec) {
-      return rec.segments.find(sg => sg.out === null) || null;
+      return (rec && rec.segments.find(sg => sg.out === null)) || null;
     },
 
     reset() {

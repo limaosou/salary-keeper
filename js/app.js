@@ -226,9 +226,187 @@
 
   /* ---------- 考勤页 ---------- */
   let attMonth = cur();
+
+  /* ---------- 考勤月历 ---------- */
+  function renderCalendar() {
+    const [y, m] = attMonth.split('-').map(Number);
+    const cells = Salary.monthGrid(y, m, { now: new Date() });
+    const todayKey = todayStr();
+    const box = $('cal-grid');
+
+    box.innerHTML = cells.map(c => {
+      if (c.pad) return '<div class="cal-cell pad"></div>';
+      const code = c.code;
+      const tappable = code !== 'future';
+      const cls = ['cal-cell', 's-' + code];
+      if (c.dateStr === todayKey) cls.push('today');
+      if (tappable) cls.push('tappable');
+      const sub = c.code === 'future' ? '' : `<span class="cs">${c.sym}</span>`;
+      const hours = (c.code !== 'future' && c.workHours > 0) ? `<span class="ch">${c.workHours.toFixed(1)}h</span>` : '';
+      const dot = (c.makeups && c.makeups.length) ? '<span class="mkdot"></span>' : '';
+      return `<div class="${cls.join(' ')}" data-date="${c.dateStr}" data-code="${code}"${tappable ? ' role="button" tabindex="0"' : ''}>
+        <span class="cd">${c.date}</span>${sub}${hours}${dot}
+      </div>`;
+    }).join('');
+
+    box.querySelectorAll('.cal-cell.tappable').forEach(el => {
+      el.onclick = () => openMakeup(el.dataset.date);
+    });
+
+    // 状态统计胶囊
+    const s = Salary.monthStatusStats(y, m, { now: new Date() });
+    const chips = [
+      ['出勤', s.workDays], ['正常', s.normal], ['迟到', s.late],
+      ['早退', s.early], ['缺卡', s.missing], ['旷工', s.absent],
+      ['请假', s.leave], ['休息', s.rest], ['待出勤', s.pending]
+    ].filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${k} <b>${v}</b></span>`);
+    $('att-stat').innerHTML = chips.length
+      ? chips.join('') + (s.makeupCount ? `<span class="chip">补签 <b>${s.makeupCount}</b></span>` : '')
+      : '<span class="chip">本月暂无考勤数据</span>';
+  }
+
+  /* ---------- 补签 / 请假面板 ---------- */
+  let mkDate = null, mkType = 'in';
+
+  function openMakeup(dateStr) {
+    mkDate = dateStr;
+    // 默认动作要贴合当下情形：没签到 → 补签到；有签到未签退 → 补签退
+    const rec0 = Store.peek(dateStr);
+    const segs0 = (rec0 && rec0.segments) || [];
+    const hasOpen = segs0.some(sg => sg.out === null);
+    mkType = (segs0.length && hasOpen) ? 'out' : 'in';
+
+    $('mk-title').textContent = dateStr;
+    $('mk-note').value = '';
+    $('mk-msg').textContent = '';
+    $('mk-msg').className = 'hint';
+    $('mk-leave-type').value = (rec0 && rec0.leave && rec0.leave.type) || '연차';
+    syncSegBtn();
+    renderMakeupPanel();
+    $('mk-mask').hidden = false;
+  }
+
+  function closeMakeup() { $('mk-mask').hidden = true; mkDate = null; }
+
+  function syncSegBtn() {
+    document.querySelectorAll('.seg-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.type === mkType);
+    });
+    // 默认时间：补签到给标准上班时间，补签退给标准下班时间
+    const fallback = mkType === 'in' ? Store.settings.workStart : Store.settings.workEnd;
+    $('mk-time').value = fallback || (mkType === 'in' ? '09:00' : '18:00');
+    const hasIn = !!((Store.peek(mkDate) || {}).segments || []).length;
+    const btn = document.querySelector('.seg-btn[data-type="in"]');
+    if (btn) btn.textContent = hasIn ? '补签到（已有）' : '补签到';
+  }
+
+  function renderMakeupPanel() {
+    if (!mkDate) return;
+    const st = Salary.judgeDay(mkDate, { now: new Date() });
+    const rec = Store.peek(mkDate);
+
+    const badge = $('mk-status');
+    badge.className = 'lg s-' + st.code;
+    badge.textContent = st.label;
+
+    // 打卡明细
+    const segs = rec && rec.segments ? rec.segments : [];
+    $('mk-detail').innerHTML = segs.length
+      ? segs.map((sg, i) => `<div class="mk-seg">
+          <span>第 ${i + 1} 段 <i class="opic">${sg.makeup ? '手工补签' : '自动打卡'}</i></span>
+          <b>${fmtTime(sg.in)} – ${sg.out ? fmtTime(sg.out) : '<span class="opic">未签退</span>'}</b>
+        </div>`).join('') +
+        `<div class="mk-seg"><span>工时 / 加班</span><b>${st.workHours.toFixed(1)}h / ${st.otHours.toFixed(1)}h</b></div>`
+      : `<div class="mk-empty">当日无打卡记录${st.leave ? `（已登记请假：${st.leave.type}）` : ''}</div>`;
+
+    // 补签留痕
+    const logs = (rec && rec.makeups) || [];
+    $('mk-logs').innerHTML = logs.length
+      ? logs.slice().reverse().map(mk => `<div class="mk-log">
+          <span class="lt">${mk.type === 'in' ? '签到' : '签退'}</span>
+          <span class="ln">${fmtTime(mk.time)}　${mk.note || '—'}</span>
+          <button class="lx" data-id="${mk.id}">撤销</button>
+        </div>`).join('')
+      : '<div class="mk-empty">暂无补签记录</div>';
+    $('mk-logs').querySelectorAll('.lx').forEach(b => {
+      b.onclick = () => {
+        if (!confirm('确定撤销这条补签？该次打卡将一并回滚。')) return;
+        const r = Store.removeMakeup(mkDate, b.dataset.id);
+        toast(r.msg);
+        if (r.ok) { renderMakeupPanel(); refreshAll(); }
+      };
+    });
+
+    // 请假按钮文案随状态切换
+    $('mk-leave').textContent = st.leave ? '取消请假' : '登记请假';
+    $('mk-rest').textContent = (rec && rec.isRestDay) ? '取消休息日' : '标记休息日';
+  }
+
+  function bindCalendar() {
+    $('mk-close').onclick = closeMakeup;
+    $('mk-mask').onclick = e => { if (e.target === $('mk-mask')) closeMakeup(); };
+
+    document.querySelectorAll('.seg-btn').forEach(b => {
+      b.onclick = () => { mkType = b.dataset.type; syncSegBtn(); };
+    });
+
+    $('mk-submit').onclick = () => {
+      if (!mkDate) return;
+      const t = $('mk-time').value;
+      if (!t) return showMkMsg('请填写补签时间', false);
+      const time = new Date(`${mkDate}T${t}:00`).getTime();
+      const res = Store.addMakeup(mkDate, {
+        type: mkType,
+        time: new Date(time).toISOString(),
+        note: $('mk-note').value.trim()
+      });
+      showMkMsg(res.msg, res.ok);
+      if (res.ok) {
+        $('mk-note').value = '';
+        renderMakeupPanel();
+        refreshAll();
+      }
+    };
+
+    $('mk-leave').onclick = () => {
+      const st = Salary.judgeDay(mkDate, { now: new Date() });
+      if (st.leave) {
+        Store.clearLeave(mkDate);
+        toast('已取消请假');
+      } else {
+        Store.setLeave(mkDate, { type: $('mk-leave-type').value });
+        toast('已登记请假');
+      }
+      renderMakeupPanel(); refreshAll();
+    };
+
+    $('mk-rest').onclick = () => {
+      const rec = Store.day(mkDate);
+      rec.isRestDay = !rec.isRestDay;
+      Store.save();
+      toast(rec.isRestDay ? '已标记为休息日' : '已取消休息日');
+      renderMakeupPanel(); refreshAll();
+    };
+  }
+
+  function showMkMsg(msg, ok) {
+    const el = $('mk-msg');
+    el.textContent = msg;
+    el.className = 'hint ' + (ok ? 'ok' : 'err');
+  }
+
+  /** 补签/请假后统一刷新（月历 + 列表 + 统计 + 首页 + 月薪） */
+  function refreshAll() {
+    renderCalendar();
+    renderAttendance();
+    renderSalary();
+    refreshToday();
+  }
+
   function renderAttendance() {
     const [y, m] = attMonth.split('-').map(Number);
     $('cur-month').textContent = attMonth;
+    renderCalendar();
     const sum = Salary.calcMonth(y, m);
     $('m-days').textContent = `${sum.workDays} 天`;
     $('m-hours').textContent = `${sum.workHours.toFixed(1)}h`;
@@ -246,14 +424,16 @@
       const times = rec.segments.map(sg =>
         `${fmtTime(sg.in)}–${sg.out ? fmtTime(sg.out) : '未签退'}`).join('　');
       const krN = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
-      const dayPay = (r.workHours || 0) * st().hourlyRate
-        + (r.otHours || 0) * st().hourlyRate * st().overtimeMultiplier;
+      // 休息日 / 请假日 calcMonth 不产出工时明细（没有 r），这里兜底避免取值崩
+      const h = r || { workHours: 0, otHours: 0, perf: 1 };
+      const dayPay = h.workHours * st().hourlyRate
+        + h.otHours * st().hourlyRate * st().overtimeMultiplier;
       const tag = rest ? '<span class="tag rest">休息日</span>'
         : `<span class="tag ${rec.shiftType}">${rec.shiftType === 'night' ? '夜班' : '白班'}</span>`;
       return `<div class="att-item" data-date="${dateStr}" data-open="${open}">
         <div class="att-date"><b>${d.getDate()}</b><i>周${wk}</i></div>
         <div class="att-info"><b>${times || '未打卡'}${tag}</b>
-          <span>${rest ? '休息不计薪' : `工时 ${r.workHours.toFixed(1)}h · 加班 ${r.otHours.toFixed(1)}h${r.perf !== 1 ? ` · 绩效 ${r.perf}` : ''}`}${open ? ' · 点击补结算' : ''}</span></div>
+          <span>${rest ? '休息不计薪' : `工时 ${h.workHours.toFixed(1)}h · 加班 ${h.otHours.toFixed(1)}h${h.perf !== 1 ? ` · 绩效 ${h.perf}` : ''}`}${open ? ' · 点击补结算' : ''}</span></div>
         <div class="att-money">${rest ? '—' : krN(dayPay)}</div>
       </div>`;
     }).reverse().join('');
@@ -385,6 +565,21 @@
     $('set-bonus').value = s.bonusMultiplier;
     $('set-night-start').value = s.nightStart;
     $('set-night-end').value = s.nightEnd;
+
+    // 出勤判定
+    $('set-work-start').value = s.workStart || '09:00';
+    $('set-work-end').value = s.workEnd || '18:00';
+    $('set-late-grace').value = s.lateGrace ?? 5;
+    $('set-early-grace').value = s.earlyGrace ?? 5;
+    $('set-holidays').value = (s.holidays || []).join(',');
+    const rw = Array.isArray(s.restWeekdays) ? s.restWeekdays : [0];
+    if (!$('set-rest-weekdays').children.length) {
+      $('set-rest-weekdays').innerHTML = ['日', '一', '二', '三', '四', '五', '六']
+        .map((t, i) => `<button data-wd="${i}">${t}</button>`).join('');
+    }
+    $('set-rest-weekdays').querySelectorAll('button').forEach(b => {
+      b.classList.toggle('on', rw.includes(Number(b.dataset.wd)));
+    });
     $('set-perf-mode').value = s.perfMode;
     $('set-perf').value = s.perfMonthly;
     $('perf-monthly-field').style.display = s.perfMode === 'monthly' ? 'flex' : 'none';
@@ -503,6 +698,29 @@
 
     bindField('set-night-start', e => { st().nightStart = e.target.value; Store.save(); renderSalary(); });
     bindField('set-night-end', e => { st().nightEnd = e.target.value; Store.save(); renderSalary(); });
+
+    // ---- 出勤判定规则 ----
+    const refreshAtt = () => { renderCalendar(); renderAttendance(); };
+    bindField('set-work-start', e => { st().workStart = e.target.value; Store.save(); refreshAtt(); });
+    bindField('set-work-end', e => { st().workEnd = e.target.value; Store.save(); refreshAtt(); });
+    bindNum('set-late-grace', 'lateGrace', refreshAtt);
+    bindNum('set-early-grace', 'earlyGrace', refreshAtt);
+    bindField('set-holidays', e => {
+      st().holidays = e.target.value.split(/[,，\s]+/).map(s => s.trim())
+        .filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s));
+      Store.save(); refreshAtt();
+    });
+    // 周休日：按钮由 renderSettings 动态生成，这里用事件委托绑定
+    $('set-rest-weekdays').onclick = e => {
+      const b = e.target.closest('button[data-wd]');
+      if (!b) return;
+      const wd = Number(b.dataset.wd);
+      const cur = Array.isArray(st().restWeekdays) ? st().restWeekdays.slice() : [];
+      const i = cur.indexOf(wd);
+      if (i >= 0) cur.splice(i, 1); else cur.push(wd);
+      st().restWeekdays = cur.sort((x, y) => x - y);
+      Store.save(); renderSettings(); refreshAtt();
+    };
     bindField('set-perf-mode', e => {
       st().perfMode = e.target.value; Store.save();
       $('perf-monthly-field').style.display = e.target.value === 'monthly' ? 'flex' : 'none';
@@ -687,7 +905,7 @@
 
   /* ---------- 启动 ---------- */
   function init() {
-    bindToday(); bindSalary(); bindSettings();
+    bindToday(); bindSalary(); bindSettings(); bindCalendar();
     document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchPage(t.dataset.page));
 
     $('prev-month').onclick = () => {

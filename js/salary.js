@@ -101,6 +101,186 @@ const Salary = (() => {
     return result;
   }
 
+  /* ============================================================
+   * 出勤状态判定（月历视图用）
+   * ------------------------------------------------------------
+   * 优先级：未来 > 休息日/请假 > 旷工(无记录) > 缺卡 > 迟到/早退 > 正常
+   * 返回 { code, label, sym, workHours, otHours, firstIn, lastOut, open }
+   * ============================================================ */
+  const STATUS = {
+    future:  { label: '未来',   sym: '·' },
+    pending: { label: '待出勤', sym: '待' },
+    empty:   { label: '无记录', sym: '' },
+    rest:    { label: '休息',   sym: '休' },
+    leave:   { label: '请假',   sym: '假' },
+    absent:  { label: '旷工',   sym: '旷' },
+    missing: { label: '缺卡',   sym: '缺' },
+    late:    { label: '迟到',   sym: '迟' },
+    early:   { label: '早退',   sym: '退' },
+    lateearly: { label: '迟到早退', sym: '迟' },
+    normal:  { label: '正常',   sym: '' }
+  };
+
+  /** 把 'HH:mm' 转成当天 0 点起的毫秒数 */
+  function hmToMs(hm, baseMs) {
+    const [h, m] = String(hm || '00:00').split(':').map(Number);
+    const d = new Date(baseMs);
+    d.setHours(h || 0, m || 0, 0, 0);
+    return d.getTime();
+  }
+
+  /** 某天是否法定节假日 */
+  function isHoliday(dateStr, st) {
+    return Array.isArray(st.holidays) && st.holidays.includes(dateStr);
+  }
+
+  /** 某天是否周休日 */
+  function isWeeklyRest(dateStr, st) {
+    const d = new Date(`${dateStr}T00:00:00`);
+    return (st.restWeekdays || []).includes(d.getDay());
+  }
+
+  /**
+   * 判定某日状态
+   * @param {string} dateStr 'YYYY-MM-DD'
+   * @param {Date}   now     用于「未来日期」与「今天尚未结束」的判断
+   */
+  function judgeDay(dateStr, opts = {}) {
+    const st = Store.settings;
+    const now = opts.now || new Date();
+    const rec = Store.peek(dateStr);
+    const dayStart = new Date(`${dateStr}T00:00:00`).getTime();
+    const isToday = isoDate(now) === dateStr;
+
+    const base = {
+      dateStr, hasSeg: false, segCount: 0, workHours: 0, otHours: 0,
+      firstIn: null, lastOut: null, open: false, isRest: false,
+      leave: rec && rec.leave ? rec.leave : null, makeups: (rec && rec.makeups) || []
+    };
+
+    // ① 休息日（手动标注 / 周休 / 法定节假日）
+    //    放在「未来」之前：休息是确定的，不分过去未来。
+    //    否则月底的周休日会被显示成"未来"，月历就没法用来规划排班了。
+    if (rec && rec.isRestDay) {
+      return { ...base, isRest: true, code: 'rest', ...STATUS.rest };
+    }
+    const weeklyRest = isWeeklyRest(dateStr, st);
+    const holiday = isHoliday(dateStr, st);
+    if (weeklyRest || holiday) {
+      // 周休/节假日却出勤了 → 仍按实际出勤统计（算加班），保留来源标识
+      if (rec && rec.segments.length) {
+        const r = calcDay(rec, dateStr, { nowForOpen: isToday ? now : new Date(`${dateStr}T23:59:59`) });
+        return {
+          ...base, ...statusFromSegments(rec, dateStr, st, now, isToday),
+          hasSeg: true, segCount: rec.segments.length,
+          workHours: r.workHours, otHours: r.otHours,
+          extra: weeklyRest ? '주휴' : '공휴일'
+        };
+      }
+      return { ...base, isRest: true, code: 'rest', label: weeklyRest ? '주휴 周休' : '공휴일 节假日', sym: weeklyRest ? '休' : '假' };
+    }
+
+    // ② 请假：允许提前登记，所以同样优先于「未来」
+    if (base.leave) {
+      return { ...base, code: 'leave', ...STATUS.leave, label: `${base.leave.type} 请假` };
+    }
+
+    // ③ 未来日期：未到，不判定、不计缺勤
+    if (dayStart > now.getTime()) {
+      return { ...base, code: 'future', ...STATUS.future };
+    }
+
+    // ④ 无任何记录：已过去的工作日才算旷工；今天还没结束，只是「待出勤」
+    if (!rec || !rec.segments.length) {
+      if (isToday) return { ...base, code: 'pending', ...STATUS.pending };
+      return { ...base, code: 'absent', ...STATUS.absent };
+    }
+
+    return { ...base, ...statusFromSegments(rec, dateStr, st, now, isToday), hasSeg: true, segCount: rec.segments.length };
+  }
+
+  /** 从打卡段判定 迟到/早退/缺卡/正常 */
+  function statusFromSegments(rec, dateStr, st, now, isToday) {
+    const dayMs = new Date(`${dateStr}T00:00:00`).getTime();
+    const segs = rec.segments.filter(sg => sg.in);
+    const segStart = segs[0] ? new Date(segs[0].in).getTime() : null;
+    const openSeg = Store.activeSegment(rec);
+    // 最后签退时间（未签退则 null）
+    let segEnd = null;
+    segs.forEach(sg => {
+      if (sg.out) {
+        const t = new Date(sg.out).getTime();
+        if (segEnd === null || t > segEnd) segEnd = t;
+      }
+    });
+
+    const r = calcDay(rec, dateStr, {
+      // 只有「今天」才按当前时刻实时累计；往日未签退一律按当日 23:59 封顶，
+      // 否则会从那天一路算到今天，工时虚高几十倍
+      nowForOpen: isToday ? now : new Date(`${dateStr}T23:59:59`)
+    });
+    const line = {
+      workHours: r.workHours, otHours: r.otHours,
+      firstIn: segStart, lastOut: segEnd, open: !!openSeg
+    };
+
+    // 缺卡：完全没有签到，或有签到却没有签退且当天已结束
+    if (!segStart) return { ...line, code: 'missing', ...STATUS.missing };
+    if (openSeg && !isToday) return { ...line, code: 'missing', ...STATUS.missing };
+
+    const startAt = hmToMs(st.workStart, dayMs);
+    const endAt = hmToMs(st.workEnd, dayMs);
+    const lateGrace = (Number(st.lateGrace) || 0) * 60000;
+    const earlyGrace = (Number(st.earlyGrace) || 0) * 60000;
+
+    const isLate = segStart > startAt + lateGrace;
+    // 今天还在进行中：只要已签到且未签退，不判早退/缺卡
+    const isEarly = segEnd !== null && segEnd < endAt - earlyGrace;
+
+    if (isLate && isEarly) return { ...line, code: 'lateearly', ...STATUS.lateearly };
+    if (isLate) return { ...line, code: 'late', ...STATUS.late };
+    if (isEarly) return { ...line, code: 'early', ...STATUS.early };
+    return { ...line, code: 'normal', ...STATUS.normal };
+  }
+
+  /** 生成某月完整日历（含前后补白），每格附带判定结果 */
+  function monthGrid(year, month, opts = {}) {
+    const now = opts.now || new Date();
+    const first = new Date(year, month - 1, 1);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const lead = first.getDay();          // 月首前需要补几格空白
+
+    const cells = [];
+    for (let i = 0; i < lead; i++) cells.push({ pad: true });
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      cells.push({ pad: false, date: d, dateStr: ds, ...judgeDay(ds, { now }) });
+    }
+    // 尾部补白到整周
+    while (cells.length % 7 !== 0) cells.push({ pad: true });
+    return cells;
+  }
+
+  /** 月度统计：按月历口径汇总各类出勤状态天数 */
+  function monthStatusStats(year, month, opts = {}) {
+    const cells = monthGrid(year, month, opts).filter(c => !c.pad);
+    const s = { normal: 0, late: 0, early: 0, lateearly: 0, missing: 0, absent: 0, leave: 0, rest: 0, future: 0, pending: 0, workHours: 0, otHours: 0, makeupCount: 0 };
+    for (const c of cells) {
+      if (c.code === 'future') { s.future++; continue; }
+      if (c.code === 'pending') { s.pending++; continue; }
+      if (c.code === 'rest') { s.rest++; continue; }
+      if (c.code === 'leave') { s.leave++; continue; }
+      if (s[c.code] != null) s[c.code]++;
+      if (c.hasSeg) { s.workHours += c.workHours; s.otHours += c.otHours; }
+      s.makeupCount += (c.makeups || []).length;
+    }
+    s.workDays = s.normal + s.late + s.early + s.lateearly + s.missing;
+    s.workHours = Math.round(s.workHours * 100) / 100;
+    s.otHours = Math.round(s.otHours * 100) / 100;
+    return s;
+  }
+
   /**
    * 月度计算：应发构成 → 扣除 → 实发
    * 完全按工资条口径，逐项对应，便于逐笔核对
@@ -276,6 +456,7 @@ const Salary = (() => {
 
   return {
     distance, nightOverlapHours, calcDay, calcMonth, calcTax, calcKoreanTax,
+    judgeDay, statusFromSegments, monthGrid, monthStatusStats, STATUS, isHoliday, isWeeklyRest,
     monthlyStandardHours, weeklyBase, taxableIncome, isoDate, fmtHM
   };
 })();
