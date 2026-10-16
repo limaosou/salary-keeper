@@ -20,6 +20,12 @@ const Store = (() => {
       fence: { lat: 0, lng: 0, radius: 200, name: '公司' },
       autoPunch: true,
       punchConfirmCount: 2,      // 连续 N 次在圈内才自动签到（防 GPS 漂移）
+      // 打开即校准：每次打开页面取一次定位，自动对齐签到/签退状态
+      autoSyncOnOpen: true,
+      lastSync: null,            // { at, dist, inside }
+      issues: [],                // 异常记录，如「离开时定位失败」
+      // 离开后多久内不再自动重签（防 GPS 漂移导致的反复签到签退，单位分钟）
+      reentryGuard: 30,
       // 扣除项
       deductions: [
         { id: 'd1', name: '健康保险费', type: 'percent', value: 3 },
@@ -54,6 +60,7 @@ const Store = (() => {
       s.settings.fence = Object.assign(DEFAULTS.settings.fence, (parsed.settings || {}).fence || {});
       s.attendance = parsed.attendance || {};
       s.actualPaid = parsed.actualPaid || {};
+      s.settings.issues = parsed.settings?.issues || [];
       return s;
     } catch (e) {
       console.error('读取本地数据失败', e);
@@ -107,6 +114,7 @@ const Store = (() => {
       s.settings = Object.assign(s.settings, data.settings || {});
       s.settings.fence = Object.assign(DEFAULTS.settings.fence, (data.settings || {}).fence || {});
       s.attendance = data.attendance || {};
+      s.settings.issues = data.settings?.issues || [];
       state = s;
       save();
     },

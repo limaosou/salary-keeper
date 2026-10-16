@@ -20,29 +20,117 @@
   const M = n => curSym() + money(n);   // 带货币符号
 
   /* ---------- 打卡动作 ---------- */
-  function punchIn(auto = false) {
+  function punchIn(auto = false, reason = '') {
     const ds = todayStr();
     const rec = Store.day(ds);
-    if (Store.activeSegment(rec)) { toast('当前已在打卡中'); return; }
-    rec.segments.push({ in: new Date().toISOString(), out: null, auto });
+    if (Store.activeSegment(rec)) { toast('当前已在打卡中'); return false; }
+    rec.segments.push({ in: new Date().toISOString(), out: null, auto, reason });
     rec.isRestDay = false;
     Store.save();
     refreshToday();
     toast(auto ? '📍 已进入公司区域，自动签到' : '✅ 已签到');
+    return true;
   }
 
-  function punchOut(auto = false) {
+  function punchOut(auto = false, reason = '') {
     const ds = todayStr();
     const rec = Store.attendance[ds];
     const seg = rec && Store.activeSegment(rec);
-    if (!seg) { toast('当前未在打卡中'); return; }
+    if (!seg) { toast('当前未在打卡中'); return false; }
     seg.out = new Date().toISOString();
+    seg.outReason = reason;
     Store.save();
     refreshToday();
     const r = Salary.calcDay(rec, ds);
     toast(auto
       ? `📍 已离开公司区域，自动签退 · 今日合计 ${M(r.total)}`
       : `✅ 已签退 · 今日合计 ${M(r.total)}`);
+    return true;
+  }
+
+  function logIssue(text) {
+    st().issues.unshift({ at: new Date().toISOString(), text });
+    st().issues = st().issues.slice(0, 30);      // 只留最近 30 条
+    Store.save();
+  }
+
+  /* ---------- 打开即校准：不依赖页面常驻，一次定位对齐状态 ----------
+     适用场景：iOS 锁屏会冻结网页，故改用「快捷指令自动化 → 到达/离开公司
+     时打开本页」的方式，由系统负责唤起，本页取一次定位就把状态对齐。 */
+  let syncing = false;
+
+  function syncState(trigger = 'open') {
+    if (syncing) return Promise.resolve(null);
+    syncing = true;
+    return GeoPunch.checkOnce().then(res => {
+      const s = st();
+      s.lastSync = { at: new Date().toISOString(), dist: Math.round(res.dist), inside: res.inside };
+      Store.save();
+
+      const ds = todayStr();
+      const rec = Store.attendance[ds];
+      const active = rec && Store.activeSegment(rec);
+      let acted = null;
+
+      if (res.inside) {
+        if (!active) {
+          // 防抖：刚签退（离场）后短时间内不重签，避免围栏边缘抖动反复打卡
+          const guard = (s.reentryGuard || 0) * 60000;
+          const last = rec && rec.segments[rec.segments.length - 1];
+          const recentlyLeft = last && last.out && last.outReason === 'leave'
+            && (Date.now() - new Date(last.out).getTime()) < guard;
+          if (!recentlyLeft) acted = punchIn(true, 'auto-sync-in') ? 'in' : null;
+        } else {
+          acted = null;   // 已在打卡中，无需动作
+        }
+      } else {
+        if (active) acted = punchOut(true, 'leave') ? 'out' : null;
+      }
+
+      renderSyncStatus(res, acted, trigger);
+      return { res, acted };
+    }).catch(err => {
+      const msg = err.code === 1 ? '定位权限被拒绝'
+        : err.code === 'nofence' ? '尚未配置公司坐标'
+        : err.code === 3 ? '定位超时' : (err.message || '定位失败');
+      $('sync-status').innerHTML = `<span class="sync-dot bad"></span>⚠️ 校准失败：${msg}`;
+      if (err.code === 1) logIssue('定位权限被拒绝，自动打卡无法执行');
+      return null;
+    }).finally(() => { syncing = false; });
+  }
+
+  function renderSyncStatus(res, acted, trigger) {
+    const box = $('sync-status');
+    if (!box) return;
+    const d = Math.round(res.dist);
+    let msg;
+    if (acted === 'in') msg = `✅ ${res.inside ? '在公司内' : ''}已自动签到 · 距公司 ${d} 米`;
+    else if (acted === 'out') msg = `📍 已离开公司区域，自动签退 · 距公司 ${d} 米`;
+    else if (res.inside) msg = `🏢 在公司区域内（距 ${d} 米）· 当前打卡中`;
+    else msg = `📍 当前位置在公司外（距 ${d} 米）`;
+    box.innerHTML = `<span class="sync-dot ok"></span>${msg}<i>${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</i>`;
+    if (acted) renderAttendance(), renderSalary();
+  }
+
+  /* ---------- 全自动打卡：快捷指令配置 ---------- */
+  // 快捷指令要打开的地址：用当前站点 origin，兼容本地/线上
+  function syncUrl() {
+    return location.origin + location.pathname;
+  }
+
+  function renderSyncUrl() {
+    const el = $('sync-url');
+    if (el) el.textContent = syncUrl();
+  }
+
+  function renderIssues() {
+    const box = $('issue-list');
+    if (!box) return;
+    const list = st().issues || [];
+    box.innerHTML = list.length ? list.map(it => {
+      const d = new Date(it.at);
+      return `<div class="issue-item"><b>${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}</b><span>${it.text}</span></div>`;
+    }).join('') : '<div class="att-empty">暂无异常记录 · 一切正常</div>';
   }
 
   /* ---------- 今日页 ---------- */
@@ -95,6 +183,11 @@
   function bindToday() {
     $('btn-manual-in').onclick = () => punchIn(false);
     $('btn-manual-out').onclick = () => punchOut(false);
+
+    $('btn-sync').onclick = () => {
+      $('sync-status').innerHTML = '<span class="sync-dot"></span>正在校准位置…';
+      syncState('manual');
+    };
 
     $('shift-toggle').onclick = () => {
       const ds = todayStr();
@@ -245,6 +338,10 @@
     $('set-fence-lng').value = s.fence.lng || '';
     $('set-fence-radius').value = s.fence.radius;
     $('fence-radius-label').textContent = `${s.fence.radius} 米`;
+    $('set-reentry-guard').value = s.reentryGuard;
+    $('sync-on-open-switch').checked = s.autoSyncOnOpen;
+    renderSyncUrl();
+    renderIssues();
 
     renderDeductList();
     renderTaxTable();
@@ -286,6 +383,40 @@
       $('fence-radius-label').textContent = `${e.target.value} 米`;
       Store.save();
     });
+
+    // ---- 全自动打卡配置 ----
+    bindNum('set-reentry-guard', 'reentryGuard');
+
+    $('sync-on-open-switch').onchange = e => {
+      st().autoSyncOnOpen = e.target.checked; Store.save();
+      if (e.target.checked) syncState('toggle');
+    };
+
+    $('btn-copy-url').onclick = async () => {
+      const url = syncUrl();
+      try {
+        await navigator.clipboard.writeText(url);
+        toast('✅ 地址已复制，粘贴到快捷指令的「打开 URL」里');
+      } catch (err) {
+        toast('复制失败，请手动长按选中上方地址');
+      }
+    };
+
+    $('btn-test-sync').onclick = async () => {
+      const hint = $('test-hint');
+      hint.textContent = '正在测试…';
+      const r = await syncState('test');
+      if (!r) { hint.textContent = '❌ 校准失败，请检查定位权限与公司坐标配置'; return; }
+      hint.textContent = r.acted === 'in' ? '✅ 测试通过：已在公司内，自动签到成功'
+        : r.acted === 'out' ? '✅ 测试通过：已离开公司区域，自动签退成功'
+        : r.res.inside ? '✅ 测试通过：当前位置在公司内（状态已对齐，无需打卡）'
+        : '✅ 测试通过：当前位置在公司外（状态已对齐，无需打卡）';
+    };
+
+    $('btn-clear-issues').onclick = () => {
+      st().issues = []; Store.save(); renderIssues();
+      toast('已清空异常记录');
+    };
 
     $('btn-locate').onclick = () => {
       if (!navigator.geolocation) return toast('本设备不支持定位');
@@ -428,10 +559,16 @@
 
     // 页面隐藏时 GPS 监听可能被系统挂起，回到前台恢复
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && st().autoPunch && !GeoPunch.running()) GeoPunch.start();
+      if (document.hidden) return;
+      if (st().autoPunch && !GeoPunch.running()) GeoPunch.start();
+      // 每次回到前台都校准一次状态（锁屏后回来、iOS 快捷指令唤起都靠它）
+      if (st().autoSyncOnOpen) syncState('resume');
     });
 
     if (st().autoPunch) GeoPunch.start();
+
+    // 打开即校准：让「快捷指令自动化打开本页」能自动对齐签到/签退
+    if (st().autoSyncOnOpen) syncState('open');
     refreshToday();
 
     // 实时跳动：每 15 秒刷新今日已赚

@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#F7A600">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="工资通">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
 <title>工资通 · 考勤计薪核对</title>
 <link rel="stylesheet" href="css/style.css">
@@ -48,6 +54,8 @@
         <input type="checkbox" id="auto-punch-switch">
         <em class="switch"></em>
       </label>
+      <div id="sync-status" class="sync-status"><span class="sync-dot"></span>正在校准位置…</div>
+      <button class="btn btn-ghost" id="btn-sync">立即校准位置</button>
     </div>
 
     <div class="card">
@@ -179,6 +187,59 @@
     </div>
 
     <div class="card">
+      <div class="card-title">全自动打卡（不用开着页面）</div>
+      <div class="hint" style="margin:0 0 10px">
+        iPhone 锁屏后浏览器会停止定位，所以靠<strong>系统自动化</strong>在「到达/离开公司」时自动打开本页，
+        本页取一次定位就把打卡状态对齐。全程不需要你动手，一个月看一次工资即可。
+      </div>
+
+      <label class="switch-row" style="margin-top:0">
+        <span>打开页面时自动校准</span>
+        <input type="checkbox" id="sync-on-open-switch">
+        <em class="switch"></em>
+      </label>
+
+      <div class="field">
+        <label>离开后防抖（分钟）</label>
+        <input type="number" id="set-reentry-guard" min="0" max="240" step="5">
+      </div>
+      <div class="hint" >在围栏边缘反复进出时，签退后这段时间内不会立刻重签。默认 30 分钟。</div>
+
+      <div class="step-guide">
+        <div class="step-title">iPhone 设置步骤（一次性，约 3 分钟）</div>
+        <ol>
+          <li>把本页<b>添加到主屏幕</b>（Safari 分享 → 添加到主屏幕）</li>
+          <li>先在【设置】里允许<b>定位权限</b>为「始终允许」<br>
+            <span class="sub">设置 → 隐私与安全性 → 定位服务 → Safari 网站 → 始终允许</span></li>
+          <li>打开系统「快捷指令」App → 新建快捷指令，命名「工资通打卡」</li>
+          <li>添加操作 → 搜索并添加 <b>「打开 URL」</b>（或「打开 App」选工资通）</li>
+          <li>把下面这个地址填进 URL：</li>
+        </ol>
+        <div class="copy-box">
+          <code id="sync-url">…</code>
+          <button class="btn btn-ghost" id="btn-copy-url">复制</button>
+        </div>
+        <ol start="6">
+          <li>回到「快捷指令」App → 顶部 <b>自动化</b> → 新建 → 选 <b>「到达」</b> → 地点选公司</li>
+          <li>再建一个自动化：<b>「离开」</b> 同一地点 → 都选刚才那个快捷指令</li>
+          <li>两个自动化都设为 <b>「立即运行」</b>（不要等询问）</li>
+        </ol>
+        <div class="hint">
+          围栏半径建议 <b>150–300 米</b>：iOS 的到达/离开判定本身有几十米误差，半径太小会漏触发，太大会提前触发。
+        </div>
+      </div>
+
+      <button class="btn btn-primary" id="btn-test-sync">测试一次自动打卡</button>
+      <div class="hint" id="test-hint"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">运行异常记录</div>
+      <div id="issue-list" class="issue-list"></div>
+      <button class="btn btn-ghost" id="btn-clear-issues">清空记录</button>
+    </div>
+
+    <div class="card">
       <div class="card-title">扣除项目管理</div>
       <div id="deduct-list"></div>
       <div class="deduct-add">
@@ -221,5 +282,10 @@
 <script src="js/salary.js"></script>
 <script src="js/geo.js"></script>
 <script src="js/app.js"></script>
+<script>
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
 </body>
 </html>

@@ -216,3 +216,45 @@ input, select { font-family: inherit; outline: none; }
   animation: toast-in .25s; max-width: 86%; text-align: center;
 }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* ---------- 校准状态条 ---------- */
+.sync-status {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 14px; padding: 10px 12px; border-radius: 12px;
+  background: var(--primary-soft); font-size: .78rem; color: var(--primary-deep); line-height: 1.5;
+}
+.sync-status i { font-style: normal; margin-left: auto; opacity: .7; font-variant-numeric: tabular-nums; }
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); flex-shrink: 0; }
+.sync-dot.ok { background: var(--green); }
+.sync-dot.bad { background: var(--red); }
+.sync-status + .btn { margin-top: 10px; }
+
+/* ---------- 快捷指令设置向导 ---------- */
+.step-guide {
+  margin: 14px 0; padding: 14px; border-radius: 12px;
+  background: var(--bg); border: 1px solid var(--line);
+}
+.step-title { font-size: .84rem; font-weight: 700; margin-bottom: 10px; }
+.step-guide ol { padding-left: 20px; font-size: .78rem; color: var(--text); line-height: 1.85; }
+.step-guide li { margin-bottom: 4px; }
+.step-guide b { color: var(--primary-deep); }
+.step-guide .sub { color: var(--text-2); font-size: .74rem; }
+.copy-box {
+  display: flex; align-items: center; gap: 8px; margin: 8px 0;
+  padding: 8px 10px; background: var(--card); border: 1px dashed var(--primary); border-radius: 10px;
+}
+.copy-box code {
+  flex: 1; font-size: .68rem; word-break: break-all; line-height: 1.5;
+  font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text);
+}
+.copy-box .btn { flex: 0 0 auto; padding: 7px 12px; font-size: .76rem; border-radius: 9px; }
+
+/* ---------- 异常记录 ---------- */
+.issue-list { margin-bottom: 12px; }
+.issue-item {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 8px 0; font-size: .76rem; border-bottom: 1px dashed var(--line); line-height: 1.5;
+}
+.issue-item:last-child { border-bottom: none; }
+.issue-item b { color: var(--red); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.issue-item span { color: var(--text-2); }
