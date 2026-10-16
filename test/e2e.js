@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const { chromium } = require(path.join('C:', 'Users', 'Administrator', '.workbuddy', 'binaries', 'node', 'workspace', 'node_modules', 'playwright'));
 
-const BASE = 'http://127.0.0.1:8901/index.html';
-const OUT = path.join(__dirname, '..', 'screenshots');
+const BASE = process.env.BASE || 'http://127.0.0.1:8901/index.html';
+const OUT = process.env.OUT ? path.resolve(process.env.OUT) : path.join(__dirname, '..', 'screenshots');
 const results = [];
 const ok = (name, cond, extra = '') => {
   results.push([name, !!cond]);
