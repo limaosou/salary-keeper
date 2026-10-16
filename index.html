@@ -35,6 +35,7 @@
         <div class="hero-cell"><span id="today-ot">0h00m</span><i>加班</i></div>
         <div class="hero-cell"><span id="today-segments">0</span><i>打卡段</i></div>
       </div>
+      <div class="today-shift" id="today-shift"></div>
     </header>
 
     <div class="card punch-card">
@@ -59,21 +60,23 @@
     </div>
 
     <div class="card">
-      <div class="card-title">今日明细</div>
-      <div class="rowline"><span>正常工时工资</span><b id="d-base">0.00</b></div>
-      <div class="rowline"><span>加班费（<i id="d-ot-rate">1.5</i> 倍）</span><b id="d-ot">0.00</b></div>
-      <div class="rowline"><span>夜班补助</span><b id="d-night">0.00</b></div>
-      <div class="rowline total"><span>当日合计</span><b id="d-total">0.00</b></div>
+      <div class="card-title">今日明细（日薪结构）</div>
+      <div class="rowline"><span>기본급 标准工资（8h）</span><b id="d-base">0</b></div>
+      <div class="rowline"><span>연장근로수당 固定加班（<i id="d-ot-rate">1.5</i> 倍）</span><b id="d-ot">0</b></div>
+      <div class="rowline"><span>야간근로수당 夜班补助</span><b id="d-night">—</b></div>
+      <div class="rowline" hidden><span>휴일근로수당 节假日加给</span><b id="d-holiday">0</b></div>
+      <div class="rowline total"><span>当日合计</span><b id="d-total">0</b></div>
+      <div class="hint" id="today-rate"></div>
     </div>
 
     <div class="card">
       <div class="card-title">休息扣除</div>
       <div class="stepper">
         <button class="step-btn" id="rest-minus">−</button>
-        <span id="rest-value">60 分钟</span>
+        <span id="rest-value">30 分钟</span>
         <button class="step-btn" id="rest-plus">+</button>
       </div>
-      <div class="hint">午休等不计薪时长，从当日工时中扣除</div>
+      <div class="hint">每日休息扣除（默认 30 分钟），从当日工时中扣掉；也可到【设置 → 교대근무】统一改。</div>
     </div>
   </section>
 
@@ -109,6 +112,7 @@
         <span class="lg s-absent">旷工</span>
         <span class="lg s-leave">请假</span>
         <span class="lg s-rest">休息</span>
+        <span class="lg s-holiday">法定假日</span>
         <span class="lg s-pending">待出勤</span>
       </div>
     </div>
@@ -179,6 +183,7 @@
     </div>
 
     <div class="card salary-card">
+      <div class="slip-mode" id="sal-mode"></div>
       <div class="salary-head">
         <div><i>지급합계<br><em>应发合计</em></i><b id="sal-gross">0</b></div>
         <div class="arrow">−</div>
@@ -187,6 +192,7 @@
         <div class="net"><i>차인지급액<br><em>实发工资</em></i><b id="sal-net">0</b></div>
       </div>
       <div class="slip-meta" id="sal-meta"></div>
+      <div class="slip-payday" id="sal-payday"></div>
     </div>
 
     <div class="card">
@@ -203,6 +209,11 @@
     <div class="card">
       <div class="card-title">근태내역 · 考勤汇总</div>
       <div id="sal-attendance"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">퇴직금 · 退职金（按入职日推算）</div>
+      <div id="sal-severance"></div>
     </div>
 
     <div class="card">
@@ -255,22 +266,75 @@
     </div>
 
     <div class="card">
+      <div class="card-title">교대근무 · 班次时间</div>
+      <div class="field"><label>주당 근무일수 每周上班天数</label><input type="number" id="set-weekly-work-days" step="1" min="1" max="7"></div>
+      <div class="field"><label>백근 출근 白班上班</label><input type="time" id="set-day-start"></div>
+      <div class="field"><label>백근 퇴근 白班下班</label><input type="time" id="set-day-end"></div>
+      <div class="field"><label>야근 출근 夜班上班</label><input type="time" id="set-night-shift-start"></div>
+      <div class="field"><label>야근 퇴근 夜班下班（次日）</label><input type="time" id="set-night-shift-end"></div>
+      <div class="field"><label>휴게시간 每日休息扣除（分钟）</label><input type="number" id="set-rest-minutes" step="5" min="0"></div>
+      <label class="switch-row">
+        <span>白班周一晚 2 小时上班</span>
+        <input type="checkbox" id="set-mon-late">
+        <em class="switch"></em>
+      </label>
+      <div class="field" id="mon-start-field"><label>월 백근 출근 周一上班时间</label><input type="time" id="set-mon-start"></div>
+      <label class="switch-row">
+        <span>夜班周五早 2 小时下班</span>
+        <input type="checkbox" id="set-fri-early">
+        <em class="switch"></em>
+      </label>
+      <div class="field" id="fri-end-field"><label>금 야근 퇴근 周五下班时间</label><input type="time" id="set-fri-end"></div>
+      <div class="hint">白班 08:20–20:20、夜班 20:20–次日 08:20。周上 5 天时白班周一 10:20 上班、夜班周五 06:20 下班。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">일급구조 · 日薪结构</div>
+      <div class="field"><label>기준근로 标准工时（小时）</label><input type="number" id="set-std-hours" step="0.5"></div>
+      <div class="field"><label>고정연장근로 每日固定加班（小时）</label><input type="number" id="set-fixed-ot" step="0.5"></div>
+      <div class="field"><label>야간수당 지급시간 夜班补助小时</label><input type="number" id="set-night-allow-h" step="0.5"></div>
+      <div class="field"><label>야간수당 가산율 夜班补助倍率</label><input type="number" id="set-night-allow-rate" step="0.1"></div>
+      <div class="field"><label>휴일근로 배율 节假日出勤倍率</label><input type="number" id="set-holiday-mul" step="0.1"></div>
+      <label class="switch-row">
+        <span>연차 年假带薪（按标准工时计）</span>
+        <input type="checkbox" id="set-annual-paid">
+        <em class="switch"></em>
+      </label>
+      <div class="hint">
+        白班日薪 = 标准 8h × 시급 ＋ 固定加班 3.5h × 시급 × 1.5；夜班再加 3.5h × 시급 × 0.5 夜班补助。
+        实际工时超出「标准 + 固定加班」的部分仍按加班倍率计；法定节假日出勤当日合计再乘 1.5。
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-title">출퇴근기준 · 出勤判定</div>
-      <div class="field"><label>표준출근 标准上班</label><input type="time" id="set-work-start"></div>
-      <div class="field"><label>표준퇴근 标准下班</label><input type="time" id="set-work-end"></div>
+      <div class="field">
+        <label>공휴일 法定节假日来源</label>
+        <select id="set-holiday-source">
+          <option value="builtin">内置韩国法定假日表（2025–2027）</option>
+          <option value="custom">仅使用下方自定义</option>
+          <option value="both">内置 + 自定义</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>공휴일 自定义节假日（逗号分隔）</label>
+        <input type="text" id="set-holidays" placeholder="2026-10-01,2026-10-02">
+      </div>
+      <label class="switch-row">
+        <span>근로자의 날(5/1) 计入假日</span>
+        <input type="checkbox" id="set-include-labour">
+        <em class="switch"></em>
+      </label>
       <div class="field"><label>지각허용 迟到宽限（分钟）</label><input type="number" id="set-late-grace" step="1" min="0"></div>
       <div class="field"><label>조퇴허용 早退宽限（分钟）</label><input type="number" id="set-early-grace" step="1" min="0"></div>
       <div class="field">
         <label>주휴일 每周休息日</label>
         <div id="set-rest-weekdays" class="wd-picker"></div>
       </div>
-      <div class="field">
-        <label>공휴일 法定节假日（逗号分隔）</label>
-        <input type="text" id="set-holidays" placeholder="2026-10-01,2026-10-02">
-      </div>
       <div class="hint">
-        月历据此判定迟到/早退/缺卡/旷工。签到晚于「上班 + 宽限」记迟到，签退早于「下班 − 宽限」记早退；
-        休息日上班仍计加班。今天尚未打卡显示「待出勤」，不误判为旷工。
+        应到/应退时间由上方「班次时间」按白班/夜班与周一、周五例外自动推导。
+        签到晚于「应到 + 宽限」记迟到，签退早于「应退 − 宽限」记早退；
+        法定假日出勤全天 1.5 倍。今天尚未打卡显示「待出勤」，不误判为旷工。
       </div>
     </div>
 
@@ -420,6 +484,7 @@
   <div id="toast" class="toast" hidden></div>
 </div>
 
+<script src="js/holidays.js"></script>
 <script src="js/storage.js"></script>
 <script src="js/salary.js"></script>
 <script src="js/geo.js"></script>

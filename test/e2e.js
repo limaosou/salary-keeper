@@ -126,18 +126,23 @@ const GEO_MOCK = () => {
   const deduct = num(await page.textContent('#sal-deduct'));
   const net = num(await page.textContent('#sal-net'));
   console.log(`  月薪页: 应发 ${gross} / 扣除 ${deduct} / 实发 ${net}`);
-  // 基本工资 + 周薪 + 实物补贴 + 职务开发费为固定部分（加班费随考勤变动）
-  const baseFixed = 1842720 + 335040 + 366450 + 192000;
-  ok('月应发 ≥ 固定项合计 2,736,210', gross >= baseFixed, `实际 ${gross}`);
+  // 当月走「按考勤实算」口径：固定项只剩 실액수당 + 직무개발비，
+  // 기본급 / 연장근로수당 随出勤天数变动，不再等于工资条上的固定值
+  const baseFixed = 366450 + 192000;
+  ok('月应发 ≥ 固定津贴合计 558,450', gross >= baseFixed, `实际 ${gross}`);
   ok('应发−扣除=实发', Math.abs(gross - deduct - net) < 1);
   const dedHtml = await page.innerHTML('#sal-deductions');
   ok('扣除项含健康/长期/雇佣保险+所得税',
     dedHtml.includes('국민건강보험') && dedHtml.includes('장기보험')
     && dedHtml.includes('고용보험') && dedHtml.includes('소득세'));
   const bdHtml = await page.innerHTML('#sal-breakdown');
-  ok('应发含 기본급/주수/실액수당/직무개발비',
-    bdHtml.includes('기본급') && bdHtml.includes('기업급여') && bdHtml.includes('실액수당') && bdHtml.includes('직무개발비'));
-  ok('显示社保基数 2,209,170', (await page.textContent('#sal-base')).includes('2,209,170'));
+  ok('应发含 기본급/연장근로수당/실액수당/직무개발비',
+    bdHtml.includes('기본급') && bdHtml.includes('연장근로수당')
+    && bdHtml.includes('실액수당') && bdHtml.includes('직무개발비'));
+  ok('当月口径标识为按考勤实算', (await page.textContent('#sal-mode')).includes('예상'));
+  ok('显示社保基数（기본급 + 실액수당）',
+    /보험료기준/.test(await page.textContent('#sal-base'))
+    && /\d/.test(await page.textContent('#sal-base')));
   ok('考勤汇总含总工时/加班/夜班/出勤',
     (await page.innerHTML('#sal-attendance')).includes('총근로시간')
     && (await page.innerHTML('#sal-attendance')).includes('초과근로시간'));

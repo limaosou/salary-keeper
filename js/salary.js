@@ -129,9 +129,75 @@ const Salary = (() => {
     return d.getTime();
   }
 
-  /** 某天是否法定节假日 */
+  /**
+   * 某天是否法定节假日
+   * holidaySource: builtin=内置韩国法定假日表 | custom=仅用户自定义 | both=两者
+   */
   function isHoliday(dateStr, st) {
-    return Array.isArray(st.holidays) && st.holidays.includes(dateStr);
+    const src = st.holidaySource || 'builtin';
+    if (src !== 'custom' && typeof KR_HOLIDAYS !== 'undefined') {
+      const h = KR_HOLIDAYS.get(dateStr, { includeLabour: st.includeLabourDay !== false });
+      if (h) return true;
+    }
+    if (src !== 'builtin' && Array.isArray(st.holidays)) {
+      return st.holidays.includes(dateStr);
+    }
+    return false;
+  }
+
+  /** 取某日节假日详情（供月历显示名称），非假日返回 null */
+  function holidayInfo(dateStr, st = Store.settings) {
+    const src = st.holidaySource || 'builtin';
+    if (src !== 'custom' && typeof KR_HOLIDAYS !== 'undefined') {
+      const h = KR_HOLIDAYS.get(dateStr, { includeLabour: st.includeLabourDay !== false });
+      if (h) return h;
+    }
+    if (src !== 'builtin' && Array.isArray(st.holidays) && st.holidays.includes(dateStr)) {
+      return { name: '공휴일', cn: '法定节假日', type: 'custom', typeLabel: '사용자지정' };
+    }
+    return null;
+  }
+
+  /**
+   * 某天的班次窗口（应到 / 应退时间）
+   * 白班 08:20–20:20；夜班 20:20–次日 08:20
+   * 周上 5 天时：白班周一 10:20 上班；夜班周五 06:20 下班
+   * @returns { start, end, crossMidnight, isNight, note }
+   */
+  function shiftWindowFor(dateStr, shiftType, st = Store.settings) {
+    const sh = st.shift || {};
+    const d = new Date(`${dateStr}T00:00:00`);
+    const wd = d.getDay();                      // 0=周日 … 5=周五
+    const fiveDays = (Number(sh.weeklyWorkDays) || 5) >= 5;
+
+    if (shiftType === 'night') {
+      const start = sh.nightStart || '20:20';
+      let end = sh.nightEnd || '08:20';
+      let note = '';
+      if (fiveDays && sh.friEarlyEnd && wd === 5 && sh.friNightEnd) {
+        end = sh.friNightEnd; note = '금 야근 조퇴근 周五早下班';
+      }
+      return { start, end, crossMidnight: true, isNight: true, note };
+    }
+    let start = sh.dayStart || '08:20';
+    const end = sh.dayEnd || '20:20';
+    let note = '';
+    if (fiveDays && sh.monLateStart && wd === 1 && sh.monDayStart) {
+      start = sh.monDayStart; note = '월 백근 지각출근 周一晚上班';
+    }
+    return { start, end, crossMidnight: false, isNight: false, note };
+  }
+
+  /** 取某日应到/应退的具体时刻（Date），用于迟到早退判定 */
+  function shiftBoundary(dateStr, shiftType, which, st = Store.settings) {
+    const w = shiftWindowFor(dateStr, shiftType, st);
+    const hm = which === 'in' ? w.start : w.end;
+    const [h, m] = hm.split(':').map(Number);
+    const d = new Date(`${dateStr}T00:00:00`);
+    d.setHours(h, m, 0, 0);
+    // 夜班下班跨午夜：归到次日
+    if (which === 'out' && w.crossMidnight) d.setDate(d.getDate() + 1);
+    return d;
   }
 
   /** 某天是否周休日 */
@@ -152,9 +218,12 @@ const Salary = (() => {
     const dayStart = new Date(`${dateStr}T00:00:00`).getTime();
     const isToday = isoDate(now) === dateStr;
 
+    const hi0 = holidayInfo(dateStr, st);
     const base = {
       dateStr, hasSeg: false, segCount: 0, workHours: 0, otHours: 0,
       firstIn: null, lastOut: null, open: false, isRest: false,
+      isHoliday: !!hi0, holidayName: hi0 ? hi0.name : '',
+      pay: null,
       leave: rec && rec.leave ? rec.leave : null, makeups: (rec && rec.makeups) || []
     };
 
@@ -166,18 +235,25 @@ const Salary = (() => {
     }
     const weeklyRest = isWeeklyRest(dateStr, st);
     const holiday = isHoliday(dateStr, st);
+    const hi = holiday ? holidayInfo(dateStr, st) : null;
     if (weeklyRest || holiday) {
-      // 周休/节假日却出勤了 → 仍按实际出勤统计（算加班），保留来源标识
+      // 周休/节假日却出勤了 → 仍按实际出勤统计（节假日全天 1.5 倍），保留来源标识
       if (rec && rec.segments.length) {
         const r = calcDay(rec, dateStr, { nowForOpen: isToday ? now : new Date(`${dateStr}T23:59:59`) });
         return {
           ...base, ...statusFromSegments(rec, dateStr, st, now, isToday),
           hasSeg: true, segCount: rec.segments.length,
           workHours: r.workHours, otHours: r.otHours,
-          extra: weeklyRest ? '주휴' : '공휴일'
+          isHoliday: !!holiday, holidayName: hi ? hi.name : '',
+          extra: holiday ? `${hi ? hi.name : '공휴일'} ×1.5` : '주휴'
         };
       }
-      return { ...base, isRest: true, code: 'rest', label: weeklyRest ? '주휴 周休' : '공휴일 节假日', sym: weeklyRest ? '休' : '假' };
+      return {
+        ...base, isRest: true, code: 'rest',
+        isHoliday: !!holiday, holidayName: hi ? hi.name : '',
+        label: holiday ? `${hi ? hi.name : '공휴일'} 法定假日` : '주휴 周休',
+        sym: holiday ? '假' : '休'
+      };
     }
 
     // ② 请假：允许提前登记，所以同样优先于「未来」
@@ -228,8 +304,10 @@ const Salary = (() => {
     if (!segStart) return { ...line, code: 'missing', ...STATUS.missing };
     if (openSeg && !isToday) return { ...line, code: 'missing', ...STATUS.missing };
 
-    const startAt = hmToMs(st.workStart, dayMs);
-    const endAt = hmToMs(st.workEnd, dayMs);
+    // 按当日班次（白班/夜班）与星期例外取应到/应退时刻
+    const shiftType = rec.shiftType || 'day';
+    const startAt = shiftBoundary(dateStr, shiftType, 'in', st).getTime();
+    const endAt = shiftBoundary(dateStr, shiftType, 'out', st).getTime();
     const lateGrace = (Number(st.lateGrace) || 0) * 60000;
     const earlyGrace = (Number(st.earlyGrace) || 0) * 60000;
 
@@ -241,6 +319,147 @@ const Salary = (() => {
     if (isLate) return { ...line, code: 'late', ...STATUS.late };
     if (isEarly) return { ...line, code: 'early', ...STATUS.early };
     return { ...line, code: 'normal', ...STATUS.normal };
+  }
+
+  /* ============================================================
+   * 日薪计算（新口径）
+   *   白班 = 标准 8h × 시급 ＋ 固定加班 3.5h × 시급 × 1.5
+   *   夜班 = 白班 ＋ 夜班补助 3.5h × 시급 × 야간가산율(0.5)
+   *   实际工时超出「标准 + 固定加班」的部分，仍按加班倍率计
+   *   法定节假日出勤 → 当日合计 × holidayMultiplier（全天 1.5 倍）
+   * ============================================================ */
+  function calcDayPay(dateStr, opts = {}) {
+    const st = Store.settings;
+    const rec = Store.peek(dateStr);
+    const dp = st.dailyPay || {};
+    const hourly = Number(st.hourlyRate) || 0;
+    const stdH = num(dp.stdHours, 8);
+    const fixH = num(dp.fixedOtHours, 3.5);
+    const nightH = num(dp.nightAllowHours, 3.5);
+    const nightRate = num(dp.nightAllowRate, 0.5);
+    const holMul = num(dp.holidayMultiplier, 1.5);
+    const otMul = Number(st.overtimeMultiplier || 1.5);
+    const hol = holidayInfo(dateStr, st);
+    const shiftType = rec ? (rec.shiftType || 'day') : 'day';
+
+    const zero = {
+      dateStr, shiftType, kind: 'none', paid: false,
+      workHours: 0, otHours: 0, nightHours: 0, extraOtHours: 0,
+      isNight: shiftType === 'night',
+      isHoliday: !!hol, holidayName: hol ? hol.name : '',
+      stdPay: 0, otPay: 0, nightPay: 0, extraOtPay: 0, holidayExtra: 0,
+      leavePay: 0, leaveType: '', total: 0
+    };
+    if (!rec) return zero;
+    if (rec.isRestDay) return { ...zero, kind: 'rest' };
+
+    if (rec.leave) {
+      const t = rec.leave.type || '기타';
+      if (dp.annualLeavePaid !== false && t === '연차') {
+        const p = KR(stdH * hourly);
+        return { ...zero, kind: 'leave', paid: true, leaveType: t, leavePay: p, total: p };
+      }
+      return { ...zero, kind: 'leave', leaveType: t };
+    }
+
+    const r = calcDay(rec, dateStr, opts);
+    if (!r.segCount) return { ...zero, kind: 'none' };
+
+    const isNight = shiftType === 'night';
+    const stdPay = KR(stdH * hourly);
+    const otPay = KR(fixH * hourly * otMul);
+    const nightPay = isNight ? KR(nightH * hourly * nightRate) : 0;
+    const extraH = Math.max(0, r.workHours - stdH - fixH);
+    const extraOtPay = KR(extraH * hourly * otMul);
+
+    const base = stdPay + otPay + nightPay + extraOtPay;
+    const holidayExtra = hol ? KR(base * (holMul - 1)) : 0;
+
+    return {
+      ...zero, kind: 'work', paid: true, isNight,
+      workHours: r.workHours, otHours: r.otHours, nightHours: r.nightHours,
+      extraOtHours: extraH,
+      stdPay, otPay, nightPay, extraOtPay, holidayExtra,
+      total: base + holidayExtra
+    };
+  }
+
+  /** 安全取数：null/undefined/NaN 时回落到默认 */
+  function num(v, dflt) {
+    const n = Number(v);
+    return (v === null || v === undefined || Number.isNaN(n)) ? dflt : n;
+  }
+
+  /* ============================================================
+   * 发薪日：每月 17 日；逢周末提前至前一个周五
+   * ============================================================ */
+  function payDateFor(year, month, payDay = 17) {
+    const day = Math.min(31, Math.max(1, Number(payDay) || 17));
+    const d = new Date(year, month - 1, day);
+    const dow = d.getDay();
+    let adjusted = false;
+    if (dow === 6) { d.setDate(d.getDate() - 1); adjusted = true; }   // 周六 → 周五
+    else if (dow === 0) { d.setDate(d.getDate() - 2); adjusted = true; } // 周日 → 周五
+    const WD = ['일', '월', '화', '수', '목', '금', '토'];
+    return {
+      date: d,
+      dateStr: isoDate(d),
+      weekday: d.getDay(),
+      weekdayKr: WD[d.getDay()],
+      adjusted,
+      origin: day,
+      label: `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})`
+    };
+  }
+
+  /* ============================================================
+   * 退职金（퇴직금）
+   *   法定：1일 평균임금 × 30일 × (재직일수 / 365)，需满 1 年
+   *   1일 평균임금 = 最近 3 个月工资总额 ÷ 最近 3 个月总天数
+   * ============================================================ */
+  function parseHireDate(s) {
+    if (!s) return null;
+    const m = String(s).match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (!m) return null;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  /**
+   * 计算工龄与预计退职金
+   * @param {string} hireDateStr 'YYYY/MM/DD'
+   * @param {Date} asOf
+   * @param {number} monthlyGross 月平均应发（用于折算日均工资）
+   */
+  function severance(hireDateStr, asOf = new Date(), monthlyGross = 0) {
+    const hire = parseHireDate(hireDateStr);
+    const base = {
+      ok: false, hireDate: hireDateStr || '', days: 0, years: 0, months: 0,
+      eligible: false, dailyAvgWage: 0, amount: 0, monthlyGross, note: ''
+    };
+    if (!hire) return { ...base, note: '未填写或无法解析入职日期' };
+
+    const MS_DAY = 86400000;
+    const days = Math.floor((asOf.getTime() - hire.getTime()) / MS_DAY);
+    if (days < 0) return { ...base, note: '入职日期晚于当前日期' };
+
+    const years = Math.floor(days / 365);
+    const months = Math.floor((days % 365) / 30);
+    const eligible = days >= 365;
+
+    // 1일 평균임금 ≈ 月平均应发 ÷ 当月天数（30 日基准，韩国实务常用）
+    const dailyAvgWage = monthlyGross > 0 ? KR(monthlyGross / 30) : 0;
+    const amount = eligible && dailyAvgWage > 0
+      ? KR(dailyAvgWage * 30 * (days / 365))
+      : 0;
+
+    return {
+      ...base, ok: true, days, years, months, eligible,
+      dailyAvgWage, amount,
+      note: eligible
+        ? `근속 ${years}년 ${months}개월（${days}일）`
+        : `근속 ${days}일，未满 1 年，尚无法定退职金`
+    };
   }
 
   /** 生成某月完整日历（含前后补白），每格附带判定结果 */
@@ -265,12 +484,19 @@ const Salary = (() => {
   /** 月度统计：按月历口径汇总各类出勤状态天数 */
   function monthStatusStats(year, month, opts = {}) {
     const cells = monthGrid(year, month, opts).filter(c => !c.pad);
-    const s = { normal: 0, late: 0, early: 0, lateearly: 0, missing: 0, absent: 0, leave: 0, rest: 0, future: 0, pending: 0, workHours: 0, otHours: 0, makeupCount: 0 };
+    const s = {
+      normal: 0, late: 0, early: 0, lateearly: 0, missing: 0, absent: 0,
+      leave: 0, rest: 0, holiday: 0, holidayWork: 0, nightDays: 0,
+      future: 0, pending: 0, workHours: 0, otHours: 0, makeupCount: 0
+    };
     for (const c of cells) {
+      if (c.isHoliday) s.holiday++;
+      if (c.isHoliday && c.hasSeg) s.holidayWork++;
       if (c.code === 'future') { s.future++; continue; }
       if (c.code === 'pending') { s.pending++; continue; }
       if (c.code === 'rest') { s.rest++; continue; }
       if (c.code === 'leave') { s.leave++; continue; }
+      if (c.hasSeg && (Store.peek(c.dateStr) || {}).shiftType === 'night') s.nightDays++;
       if (s[c.code] != null) s[c.code]++;
       if (c.hasSeg) { s.workHours += c.workHours; s.otHours += c.otHours; }
       s.makeupCount += (c.makeups || []).length;
@@ -282,10 +508,196 @@ const Salary = (() => {
   }
 
   /**
-   * 月度计算：应发构成 → 扣除 → 实发
-   * 完全按工资条口径，逐项对应，便于逐笔核对
+   * 月度计算入口
+   *   mode='slip'        → 工资条口径（기본급 按月薪计薪工时固定，前月 / 已归档月份用）
+   *   mode='attendance'  → 按当月考勤实算（非固定值，当月用）
    */
-  function calcMonth(year, month) {
+  function calcMonth(year, month, opts = {}) {
+    const mode = opts.mode || 'slip';
+    return mode === 'attendance'
+      ? calcMonthAttendance(year, month, opts)
+      : calcMonthSlip(year, month, opts);
+  }
+
+  /** 某月该用哪种口径：当月按考勤实算，其余月份按工资条固定口径 */
+  function payrollModeFor(year, month, now = new Date()) {
+    return (now.getFullYear() === year && now.getMonth() + 1 === month)
+      ? 'attendance' : 'slip';
+  }
+
+  /* ============================================================
+   * 按考勤实算（当月）
+   *   逐日按「标准 8h + 固定加班 3.5h(×1.5) + 夜班补助」累加，
+   *   出勤天数、夜班天数、节假日出勤天数全部由实际打卡推导，非固定值。
+   * ============================================================ */
+  function calcMonthAttendance(year, month, opts = {}) {
+    const st = Store.settings;
+    const now = opts.now || new Date();
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const hourly = Number(st.hourlyRate) || 0;
+    const dp = st.dailyPay || {};
+    const stdH = Number(dp.stdHours != null ? dp.stdHours : 8);
+    const fixH = Number(dp.fixedOtHours != null ? dp.fixedOtHours : 3.5);
+    const nightH = Number(dp.nightAllowHours != null ? dp.nightAllowHours : 3.5);
+    const nightRate = Number(dp.nightAllowRate != null ? dp.nightAllowRate : 0.5);
+    const holMul = Number(dp.holidayMultiplier != null ? dp.holidayMultiplier : 1.5);
+    const otMul = Number(st.overtimeMultiplier || 1.5);
+    const perf = st.perfMode === 'monthly' ? (Number(st.perfMonthly) || 1) : 1;
+
+    let workDays = 0, nightDays = 0, holidayWorkDays = 0, restDays = 0, leaveDays = 0, annualDays = 0, otDays = 0;
+    let workHours = 0, otHours = 0, nightHours = 0, extraOtHours = 0;
+    const T = { std: 0, leave: 0, ot: 0, night: 0, extraOt: 0, holiday: 0 };
+    const dayList = [];
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const isToday = ds === isoDate(now);
+      const jd = judgeDay(ds, { now });
+      const p = calcDayPay(ds, {
+        // 今天按当前时刻实时累计；往日未签退一律封顶到当日 23:59
+        nowForOpen: isToday ? now : new Date(`${ds}T23:59:59`)
+      });
+      const rec = Store.peek(ds);
+      // 「每日记录」只列出有实际内容的日期：有打卡 / 请假 / 手标休息，
+      // 其余（未来日期、无记录的工作日、纯周休日）不占列表长度
+      const meaningful = p.kind === 'work' || p.kind === 'leave'
+        || (rec && (rec.isRestDay || (rec.segments || []).length))
+        || (!!(rec && rec.makeups && rec.makeups.length));
+      if (meaningful) dayList.push({ dateStr: ds, rec, pay: p, rest: jd.code === 'rest' });
+
+      if (jd.code === 'rest') { restDays++; continue; }
+      if (jd.code === 'leave') {
+        leaveDays++;
+        if (p.leavePay > 0) annualDays++;
+        T.leave += p.leavePay;
+        continue;
+      }
+      if (jd.code === 'future') continue;
+      if (p.kind === 'work') {
+        workDays++;
+        if (p.isNight) nightDays++;
+        if (p.isHoliday) holidayWorkDays++;
+        if (p.extraOtHours > 0.01) otDays++;
+        workHours += p.workHours; otHours += p.otHours;
+        nightHours += p.nightHours; extraOtHours += p.extraOtHours;
+      }
+      T.std += p.stdPay; T.ot += p.otPay; T.night += p.nightPay;
+      T.extraOt += p.extraOtPay; T.holiday += p.holidayExtra;
+    }
+
+    // ===== 应发构成 =====
+    const stdPay = KR((T.std) * perf);
+    const otPay = KR((T.ot + T.extraOt) * perf);
+    const nightPay = KR(T.night * perf);
+    const holPay = KR(T.holiday * perf);
+    const leavePay = KR(T.leave * perf);
+
+    // 实算模式下只保留「固定额 / 按日计发」两类津贴。
+    // formulaWeekly / formulaOT / formulaBonus 属于工资条口径（주수、현장근로수당），
+    // 在这里会与上面的 연장근로수당 重复计一笔加班费，必须排除。
+    const allowances = (st.allowances || [])
+      .filter(a => a.enabled && (a.type === 'fixed' || a.type === 'perDay'))
+      .map(a => {
+      let amount, formula = '';
+      if (a.type === 'perDay') {
+        amount = KR((Number(a.value) || 0) * (workDays + annualDays));
+        formula = `${Number(a.value).toLocaleString()}원 × ${workDays + annualDays}일`;
+      } else if (a.type === 'formulaOT') {
+        amount = otPay;
+        formula = `시급 × ${otMul} × ${(otHours + extraOtHours).toFixed(2)}h`;
+      } else if (a.type === 'formulaWeekly') {
+        amount = weeklyBase(st);
+        formula = `${st.weeklyDays}일 × ${st.dailyHours}h × 시급`;
+      } else if (a.type === 'formulaBonus') {
+        amount = KR(workHours * hourly * (Number(st.bonusMultiplier) || 0.5));
+        formula = `시급 × ${st.bonusMultiplier} × ${workHours.toFixed(1)}h`;
+      } else {
+        amount = KR(a.value); formula = '고정액 固定额';
+      }
+      return { ...a, amount, formula };
+    });
+
+    const grossItems = [
+      { id: 'std', name: '기본급', nameCn: '标准工资(8h×出勤日)', amount: stdPay,
+        formula: `${workDays}일 × ${stdH}h × 시급 ${hourly.toLocaleString()}` },
+      { id: 'ot', name: '연장근로수당', nameCn: '固定加班', amount: otPay,
+        formula: `${workDays}일 × ${fixH}h × 시급 × ${otMul}${extraOtHours > 0.01 ? ` ＋ 超出 ${extraOtHours.toFixed(2)}h` : ''}` },
+      { id: 'night', name: '야간근로수당', nameCn: '夜班补助', amount: nightPay,
+        formula: `${nightDays}일 × ${nightH}h × 시급 × ${nightRate}` },
+      { id: 'hol', name: '휴일근로수당', nameCn: '节假日出勤加给', amount: holPay,
+        formula: `${holidayWorkDays}일 × 全天 × ${holMul}` },
+      { id: 'annual', name: '유급연차', nameCn: '有薪年假', amount: leavePay,
+        formula: `${annualDays}일 × ${stdH}h × 시급` }
+    ].filter(it => it.amount > 0).concat(allowances);
+
+    const gross = grossItems.reduce((s, d) => s + d.amount, 0);
+
+    // ===== 扣除：保险基数 = 기본급 + 실액수당 =====
+    const stdItem = grossItems.find(i => i.id === 'std');
+    const mealItem = grossItems.find(i => i.id === 'a3');
+    const insurableBase = (stdItem?.amount || 0) + (mealItem?.amount || 0);
+    const incomeTax = calcIncomeTax(st, insurableBase, 0, gross);
+    const { deductions, deductTotal } = buildDeductions(st, insurableBase, incomeTax, gross);
+
+    const round2 = n => Math.round(n * 100) / 100;
+
+    return {
+      mode: 'attendance',
+      gross, net: gross - deductTotal, grossItems, deductions, deductTotal,
+      insurableBase, incomeTax, bonusPay: 0, otPay,
+      basePay: stdPay, stdHours: stdH, perf,
+      workDays, restDays, leaveDays, annualDays,
+      nightDays, holidayWorkDays, otDays,
+      workHours: round2(workHours), otHours: round2(otHours),
+      nightHours: round2(nightHours), extraOtHours: round2(extraOtHours),
+      dayList,
+      taxIsFixed: (st.taxMode || 'manual') === 'manual',
+      perfNote: perf !== 1 ? `（含评价系数 ${perf}）` : ''
+    };
+  }
+
+  /** 扣除项计算（两种口径共用） */
+  function buildDeductions(st, insurableBase, incomeTax, gross) {
+    const deductions = (st.deductions || []).filter(d => d.enabled).map(d => {
+      let amount = 0, formula = '';
+      switch (d.type) {
+        case 'percentOfBase':
+          amount = KR(insurableBase * (Number(d.value) || 0) / 100);
+          formula = `基数 × ${d.value}%`;
+          break;
+        case 'percentOfGross':
+          amount = KR(gross * (Number(d.value) || 0) / 100);
+          formula = `应发 × ${d.value}%`;
+          break;
+        case 'percentOfIncomeTax': {
+          const raw = incomeTax * (Number(d.value) || 0) / 100;
+          amount = (d.floorTo === 10 && st.localTaxFloor === true)
+            ? Math.floor(raw / 10) * 10 : KR(raw);
+          formula = `所得税 × ${d.value}%`;
+          break;
+        }
+        case 'percentOfHealthIns':
+          amount = KR(insurableBase * (Number(d.value) || 0) / 100);
+          formula = `保险基数 × ${d.value}%`;
+          break;
+        case 'koreanTax':
+          amount = incomeTax;
+          formula = (st.taxMode || 'manual') === 'manual'
+            ? '采用工资条税额' : '累进6级估算';
+          break;
+        default:
+          amount = KR(d.value); formula = '고정액 固定额';
+      }
+      return { ...d, amount, formula };
+    });
+    return { deductions, deductTotal: deductions.reduce((s, d) => s + d.amount, 0) };
+  }
+
+  /**
+   * 月度计算：工资条口径（前月 / 已归档月份）
+   * 기본급 按月薪计薪工时固定，加班按实际工时，便于逐笔核对工资条
+   */
+  function calcMonthSlip(year, month, opts = {}) {
     const st = Store.settings;
     const days = Store.attendance;
     const perf = st.perfMode === 'monthly' ? (Number(st.perfMonthly) || 1) : 1;
@@ -336,8 +748,11 @@ const Salary = (() => {
       } else if (a.type === 'formulaBonus') {
         amount = bonusPay;
         formula = `시급 × ${st.bonusMultiplier} × ${workHours.toFixed(1)}h`;
+      } else if (a.type === 'perDay') {
+        amount = KR((Number(a.value) || 0) * workDays);
+        formula = `${Number(a.value).toLocaleString()}원 × ${workDays}일`;
       } else {
-        amount = KR(a.value); formula = '固定额';
+        amount = KR(a.value); formula = '고정액 固定额';
       }
       return { ...a, amount, formula };
     });
@@ -355,51 +770,17 @@ const Salary = (() => {
     const insurableBase = (salaryItem?.amount || 0) + (mealItem?.amount || 0);
 
     const incomeTax = calcIncomeTax(st, insurableBase, bonusPay, gross);
-
-    const deductions = (st.deductions || []).filter(d => d.enabled).map(d => {
-      let amount = 0, formula = '';
-      switch (d.type) {
-        case 'percentOfBase':
-          amount = KR(insurableBase * (Number(d.value) || 0) / 100);
-          formula = `× ${d.value}%`;
-          break;
-        case 'percentOfGross':
-          amount = KR(gross * (Number(d.value) || 0) / 100);
-          formula = `应发 × ${d.value}%`;
-          break;
-        case 'percentOfIncomeTax': {
-          // 韩国地方所得税 = 所得税 × rate，但工资条实务是「先按10%取整到十位」
-          // 119,880 × 10% = 11,988 → 工资条为 11,980（十位向下取整）
-          const raw = incomeTax * (Number(d.value) || 0) / 100;
-          amount = (d.floorTo === 10 && st.localTaxFloor === true)
-            ? Math.floor(raw / 10) * 10
-            : KR(raw);
-          formula = `所得税 × ${d.value}%`;
-          break;
-        }
-        case 'percentOfHealthIns':
-          // 장기요금보험료 ≈ 건강보험료的 10%
-          amount = KR(insurableBase * (Number(d.value) || 0) / 100);
-          formula = `保险基数 × ${d.value}%`;
-          break;
-        case 'koreanTax':
-          amount = incomeTax;
-          formula = (st.taxMode || 'manual') === 'manual'
-            ? '采用工资条实发税额'
-            : '累进6级估算';
-          break;
-        default:
-          amount = KR(d.value); formula = '固定额';
-      }
-      return { ...d, amount, formula };
-    });
-    const deductTotal = deductions.reduce((s, d) => s + d.amount, 0);
+    const { deductions, deductTotal } = buildDeductions(st, insurableBase, incomeTax, gross);
 
     return {
+      mode: 'slip',
       gross, net: gross - deductTotal, grossItems, deductions, deductTotal,
       insurableBase, incomeTax, bonusPay, otPay,
       basePay, stdHours, perf,
-      workDays, restDays, workHours, otHours, nightHours, dayList,
+      workDays, restDays, leaveDays: 0, annualDays: 0,
+      nightDays: 0, holidayWorkDays: 0, otDays: 0, extraOtHours: 0,
+      workHours, otHours, nightHours, dayList,
+      taxIsFixed: (st.taxMode || 'manual') === 'manual',
       perfNote: perf !== 1 ? `（含评价系数 ${perf}）` : ''
     };
   }
@@ -455,8 +836,12 @@ const Salary = (() => {
   }
 
   return {
-    distance, nightOverlapHours, calcDay, calcMonth, calcTax, calcKoreanTax,
-    judgeDay, statusFromSegments, monthGrid, monthStatusStats, STATUS, isHoliday, isWeeklyRest,
-    monthlyStandardHours, weeklyBase, taxableIncome, isoDate, fmtHM
+    distance, nightOverlapHours, calcDay, calcDayPay,
+    calcMonth, calcMonthSlip, calcMonthAttendance, payrollModeFor,
+    calcTax, calcKoreanTax,
+    judgeDay, statusFromSegments, monthGrid, monthStatusStats, STATUS,
+    isHoliday, holidayInfo, isWeeklyRest, shiftWindowFor, shiftBoundary,
+    monthlyStandardHours, weeklyBase, taxableIncome, isoDate, fmtHM,
+    payDateFor, severance, parseHireDate, num
   };
 })();

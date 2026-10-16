@@ -182,6 +182,12 @@ input, select { font-family: inherit; outline: none; }
 .cal-cell.s-pending  .cs { color: var(--primary-deep); }
 .cal-cell.s-future   { background: transparent; border: 1px dashed var(--line); }
 .cal-cell.s-future   .cd { color: #C4C9D0; }
+/* 法定节假日：红底优先于「休息/未来」的灰色，让人一眼看出哪天是公休 */
+.cal-cell.s-holiday  { background: #FDE8E8; box-shadow: inset 0 2px 0 #D9464E; }
+.cal-cell.s-holiday  .cd { color: #B4292E; font-weight: 700; }
+.cal-cell.s-holiday  .cs { color: #B4292E; font-weight: 700; }
+/* 节假日出勤：金边表示当天全天 1.5 倍 */
+.cal-cell.s-holiday:not(.s-rest) { outline: 1.5px solid #E0A23C; outline-offset: -1.5px; }
 
 /* 补签过的小圆点标记 */
 .cal-cell .mkdot {
@@ -200,6 +206,8 @@ input, select { font-family: inherit; outline: none; }
 .lg.s-rest { background: #EFF1F4; color: #6B7280; }
 .lg.s-pending { background: var(--primary-soft); color: var(--primary-deep); }
 .lg.s-future { background: transparent; color: #B6BCC4; border: 1px dashed var(--line); }
+/* 韩国法定节假日：醒目红底 + 顶部小条，出勤时加金色描边表示全天 1.5 倍 */
+.lg.s-holiday { background: #FDE8E8; color: #B4292E; border: 1px solid #F4C7C7; }
 
 /* ===== 补签面板 ===== */
 .sheet-mask {
@@ -283,6 +291,9 @@ input, select { font-family: inherit; outline: none; }
 .tag.night { background: #E8EAF6; color: #5C6BC0; }
 .tag.day { background: var(--primary-soft); color: var(--primary-deep); }
 .tag.rest { background: #E6F7EF; color: var(--green); }
+.tag.holiday { background: #FDE8E8; color: #B4292E; }
+/* 首页 hero 底部：班次 / 假日提示 */
+.today-shift { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 
 /* ---------- 月薪 ---------- */
 .salary-card { background: linear-gradient(150deg, #2B3038, #1F2329); color: #fff; }
@@ -417,6 +428,33 @@ input, select { font-family: inherit; outline: none; }
   background: var(--bg); font-size: .74rem; color: var(--text-2);
 }
 .slip-base b { color: var(--primary-deep); font-variant-numeric: tabular-nums; }
+
+/* 口径标识：当月按考勤实算 / 前月工资条固定值 */
+.slip-mode {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 10px; font-size: .72rem; color: var(--text-2);
+}
+.slip-mode em { font-style: normal; flex: 1 1 100%; }
+.mode-tag {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: .72rem; font-weight: 700; white-space: nowrap;
+}
+.mode-tag.live  { background: #E6F7EF; color: #1B7A4B; }
+.mode-tag.fixed { background: #EEF1F5; color: #55606E; }
+
+/* 发薪日：每月 17 日，逢周末提前至周五 */
+.slip-payday {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px dashed var(--line); font-size: .78rem; color: var(--text-2);
+}
+.slip-payday b { color: var(--text); font-size: .92rem; font-variant-numeric: tabular-nums; }
+.slip-payday em { font-style: normal; flex: 1 1 100%; color: #97660A; }
+
+.hint.warn {
+  background: #FFF8E6; border: 1px solid #FFE0A6; color: #8A5A00;
+  padding: 8px 10px; border-radius: 8px;
+}
 
 /* 工资条明细里的公式说明 */
 .rowline em.f {

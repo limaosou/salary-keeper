@@ -145,16 +145,50 @@
     const s = st();
     const kr = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
 
-    // 月薪制下当日金额 = 基本工资折算时薪 × 工时 + 加班（时薪×倍率）
-    const dailyBase = r.workHours * s.hourlyRate;
-    const dailyOT = r.otHours * s.hourlyRate * s.overtimeMultiplier;
+    // 当日金额按「标准 8h + 固定加班 3.5h(×1.5) + 夜班补助」结构随打卡进度实时累计：
+    //   前 8h            → 标准 ×1.0
+    //   第 8–11.5h       → 固定加班 ×1.5
+    //   超过 11.5h 的部分 → 仍按 ×1.5
+    const dp = s.dailyPay || {};
+    const stdH = Number(dp.stdHours != null ? dp.stdHours : 8);
+    const fixH = Number(dp.fixedOtHours != null ? dp.fixedOtHours : 3.5);
+    const nightH = Number(dp.nightAllowHours != null ? dp.nightAllowHours : 3.5);
+    const nightRate = Number(dp.nightAllowRate != null ? dp.nightAllowRate : 0.5);
+    const holMul = Number(dp.holidayMultiplier != null ? dp.holidayMultiplier : 1.5);
+    const otMul = Number(s.overtimeMultiplier || 1.5);
+    const hourly = Number(s.hourlyRate) || 0;
 
-    $('today-earned').textContent = kr(dailyBase + dailyOT);
+    const h = Math.max(0, r.workHours);
+    const hStd = Math.min(h, stdH);
+    const hOT = Math.min(Math.max(h - stdH, 0), fixH);
+    const hExtra = Math.max(h - stdH - fixH, 0);
+    let earned = hStd * hourly + (hOT + hExtra) * hourly * otMul;
+
+    const isNight = !!(rec && rec.shiftType === 'night');
+    const totalShift = stdH + fixH;
+    if (isNight && totalShift > 0) {
+      earned += Math.min(h / totalShift, 1) * nightH * hourly * nightRate;
+    }
+    const holInfo = Salary.holidayInfo(ds, s);
+    if (holInfo) earned *= holMul;
+
+    $('today-earned').textContent = kr(earned);
     $('today-currency').textContent = '₩';
     $('today-worked').textContent = Salary.fmtHM(r.workHours * 3600000);
     $('today-ot').textContent = Salary.fmtHM(r.otHours * 3600000);
     $('today-segments').textContent = r.segCount;
 
+    // 班次 / 假日提示
+    const shiftTag = $('today-shift');
+    if (shiftTag) {
+      const w = Salary.shiftWindowFor(ds, isNight ? 'night' : 'day', s);
+      const tags = [
+        `<span class="tag ${isNight ? 'night' : 'day'}">${isNight ? '夜班' : '白班'} ${w.start}–${w.end}</span>`
+      ];
+      if (w.note) tags.push(`<span class="tag holiday">${w.note}</span>`);
+      if (holInfo) tags.push(`<span class="tag holiday">${holInfo.name} ×${holMul}</span>`);
+      shiftTag.innerHTML = tags.join('');
+    }
     // 状态文案
     if (!rec || !rec.segments.length) {
       $('today-status').textContent = '尚未打卡';
@@ -177,16 +211,42 @@
     $('btn-manual-in').disabled = !!active;
     $('btn-manual-out').disabled = !active;
 
-    // 当日明细（时薪折算）
-    $('d-base').textContent = kr(dailyBase);
-    $('d-ot').textContent = kr(dailyOT);
-    $('d-night').textContent = `${r.nightHours.toFixed(1)}h`;
-    $('d-total').textContent = kr(dailyBase + dailyOT);
-    $('d-ot-rate').textContent = s.overtimeMultiplier;
+    // 当日明细：与 hero 的「已赚」同口径，按完成进度逐项累计
+    const stdEarn = hStd * hourly;
+    const otEarn = (hOT + hExtra) * hourly * otMul;
+    const nightEarn = (isNight && totalShift > 0)
+      ? Math.min(h / totalShift, 1) * nightH * hourly * nightRate : 0;
+    const holEarn = holInfo ? (stdEarn + otEarn + nightEarn) * (holMul - 1) : 0;
+
+    $('d-base').textContent = `${kr(stdEarn)}  (${Math.min(h, stdH).toFixed(1)}h / ${stdH}h)`;
+    $('d-ot').textContent = `${kr(otEarn)}  (${Math.min(hOT + hExtra, fixH).toFixed(1)}h / ${fixH}h)`;
+    $('d-night').textContent = isNight
+      ? `${kr(nightEarn)}  (${(nightH * Math.min(h / totalShift, 1)).toFixed(1)}h / ${nightH}h × ${nightRate})`
+      : '—';
+    $('d-total').textContent = kr(earned);
+    $('d-ot-rate').textContent = otMul;
+    const dHol = $('d-holiday');
+    if (dHol) {
+      dHol.parentElement.hidden = !holInfo;
+      if (holInfo) dHol.textContent = `${holInfo.name} × ${holMul} → +${kr(holEarn)}`;
+    }
+
+    // 满班日薪参考（口径说明，跟实时的已赚区分开）
+    const fullBase = Math.round(stdH * hourly) + Math.round(fixH * hourly * otMul)
+      + (isNight ? Math.round(nightH * hourly * nightRate) : 0);
+    const fullDay = Math.round(fullBase * (holInfo ? holMul : 1));
+    const rateNote = $('today-rate');
+    if (rateNote) {
+      rateNote.textContent = `满班日薪 ${kr(fullDay)}원 = 标准 ${kr(stdH * hourly)}`
+        + ` + 固定加班 ${kr(fixH * hourly * otMul)}`
+        + (isNight ? ` + 夜班补助 ${kr(nightH * hourly * nightRate)}` : '')
+        + (holInfo ? `，${holInfo.name} 全天 ×${holMul}` : '');
+    }
 
     // 休息分钟
     if (rec) $('rest-value').textContent = `${rec.restMinutes} 分钟`;
-    $('shift-label').textContent = rec && rec.shiftType === 'night' ? '夜班' : '白班';
+    else $('rest-value').textContent = `${s.restMinutes ?? 30} 分钟`;
+    $('shift-label').textContent = isNight ? '夜班' : '白班';
   }
 
   function bindToday() {
@@ -220,7 +280,8 @@
   function adjustRest(delta) {
     const ds = todayStr();
     const rec = Store.day(ds);
-    rec.restMinutes = Math.max(0, Math.min(480, rec.restMinutes + delta));
+    const cur = Number(rec.restMinutes);
+    rec.restMinutes = Math.max(0, Math.min(480, (Number.isFinite(cur) ? cur : (st().restMinutes ?? 30)) + delta));
     Store.save(); refreshToday();
   }
 
@@ -239,12 +300,15 @@
       const code = c.code;
       const tappable = code !== 'future';
       const cls = ['cal-cell', 's-' + code];
+      // 法定节假日：单独配色 + 显示假日名，便于一眼看出哪天休息
+      if (c.isHoliday) cls.push('s-holiday');
       if (c.dateStr === todayKey) cls.push('today');
       if (tappable) cls.push('tappable');
       const sub = c.code === 'future' ? '' : `<span class="cs">${c.sym}</span>`;
       const hours = (c.code !== 'future' && c.workHours > 0) ? `<span class="ch">${c.workHours.toFixed(1)}h</span>` : '';
       const dot = (c.makeups && c.makeups.length) ? '<span class="mkdot"></span>' : '';
-      return `<div class="${cls.join(' ')}" data-date="${c.dateStr}" data-code="${code}"${tappable ? ' role="button" tabindex="0"' : ''}>
+      const title = c.isHoliday ? ` title="${c.holidayName || '공휴일'}${c.hasSeg ? ' · 出勤全天×1.5' : ''}"` : '';
+      return `<div class="${cls.join(' ')}" data-date="${c.dateStr}" data-code="${code}"${title}${tappable ? ' role="button" tabindex="0"' : ''}>
         <span class="cd">${c.date}</span>${sub}${hours}${dot}
       </div>`;
     }).join('');
@@ -258,7 +322,8 @@
     const chips = [
       ['出勤', s.workDays], ['正常', s.normal], ['迟到', s.late],
       ['早退', s.early], ['缺卡', s.missing], ['旷工', s.absent],
-      ['请假', s.leave], ['休息', s.rest], ['待出勤', s.pending]
+      ['请假', s.leave], ['休息', s.rest], ['法定假日', s.holiday],
+      ['假日出勤', s.holidayWork], ['夜班', s.nightDays], ['待出勤', s.pending]
     ].filter(([, v]) => v > 0).map(([k, v]) => `<span class="chip">${k} <b>${v}</b></span>`);
     $('att-stat').innerHTML = chips.length
       ? chips.join('') + (s.makeupCount ? `<span class="chip">补签 <b>${s.makeupCount}</b></span>` : '')
@@ -407,7 +472,7 @@
     const [y, m] = attMonth.split('-').map(Number);
     $('cur-month').textContent = attMonth;
     renderCalendar();
-    const sum = Salary.calcMonth(y, m);
+    const sum = Salary.calcMonth(y, m, { mode: Salary.payrollModeFor(y, m) });
     $('m-days').textContent = `${sum.workDays} 天`;
     $('m-hours').textContent = `${sum.workHours.toFixed(1)}h`;
     $('m-earn').textContent = money(sum.gross);
@@ -417,24 +482,40 @@
       box.innerHTML = '<div class="att-empty">本月暂无考勤记录</div>';
       return;
     }
-    box.innerHTML = sum.dayList.map(({ dateStr, rec, r, rest }) => {
+    const krN = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
+    const todayKey = todayStr();
+
+    box.innerHTML = sum.dayList.map(({ dateStr, rec, rest }) => {
       const d = new Date(dateStr + 'T00:00:00');
       const wk = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
       const open = !!Store.activeSegment(rec);
       const times = rec.segments.map(sg =>
         `${fmtTime(sg.in)}–${sg.out ? fmtTime(sg.out) : '未签退'}`).join('　');
-      const krN = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
-      // 休息日 / 请假日 calcMonth 不产出工时明细（没有 r），这里兜底避免取值崩
-      const h = r || { workHours: 0, otHours: 0, perf: 1 };
-      const dayPay = h.workHours * st().hourlyRate
-        + h.otHours * st().hourlyRate * st().overtimeMultiplier;
+      // 日薪统一走「标准 8h + 固定加班 3.5h + 夜班补助 + 假日 1.5 倍」口径
+      const pay = Salary.calcDayPay(dateStr, {
+        nowForOpen: dateStr === todayKey ? new Date() : new Date(`${dateStr}T23:59:59`)
+      });
+      const isNight = rec.shiftType === 'night';
       const tag = rest ? '<span class="tag rest">休息日</span>'
-        : `<span class="tag ${rec.shiftType}">${rec.shiftType === 'night' ? '夜班' : '白班'}</span>`;
+        : `<span class="tag ${isNight ? 'night' : 'day'}">${isNight ? '夜班' : '白班'}</span>`;
+      const holTag = pay.isHoliday
+        ? `<span class="tag holiday">${pay.holidayName || '공휴일'} ×1.5</span>` : '';
+
+      let detail;
+      if (rest || pay.kind === 'rest') detail = '休息不计薪';
+      else if (pay.kind === 'leave') detail = pay.paid ? `연차 有薪年假 ${krN(pay.total)}원` : `${pay.leaveType || '请假'} 不计薪`;
+      else if (pay.kind === 'none') detail = '未打卡';
+      else {
+        const parts = [`工时 ${pay.workHours.toFixed(1)}h`, `加班 ${Math.max(pay.otHours, 0).toFixed(1)}h`];
+        if (pay.nightPay > 0) parts.push(`夜补 ${krN(pay.nightPay)}`);
+        if (pay.holidayExtra > 0) parts.push(`假日加给 ${krN(pay.holidayExtra)}`);
+        detail = parts.join(' · ');
+      }
       return `<div class="att-item" data-date="${dateStr}" data-open="${open}">
         <div class="att-date"><b>${d.getDate()}</b><i>周${wk}</i></div>
-        <div class="att-info"><b>${times || '未打卡'}${tag}</b>
-          <span>${rest ? '休息不计薪' : `工时 ${h.workHours.toFixed(1)}h · 加班 ${h.otHours.toFixed(1)}h${h.perf !== 1 ? ` · 绩效 ${h.perf}` : ''}`}${open ? ' · 点击补结算' : ''}</span></div>
-        <div class="att-money">${rest ? '—' : krN(dayPay)}</div>
+        <div class="att-info"><b>${times || '未打卡'}${tag}${holTag}</b>
+          <span>${detail}${open && !rest ? ' · 点击补结算' : ''}</span></div>
+        <div class="att-money">${pay.total > 0 ? krN(pay.total) : '—'}</div>
       </div>`;
     }).reverse().join('');
 
@@ -459,7 +540,10 @@
   function renderSalary() {
     const [y, m] = salMonth.split('-').map(Number);
     $('sal-cur-month').textContent = salMonth;
-    const sum = Salary.calcMonth(y, m);
+    const now = new Date();
+    // 当月按考勤实算（非固定值）；前月按工资条固定口径
+    const mode = Salary.payrollModeFor(y, m, now);
+    const sum = Salary.calcMonth(y, m, { mode, now });
     const p = Store.profile;
 
     // 韩元无小数，用千分位
@@ -469,13 +553,26 @@
     $('sal-deduct').textContent = kr(sum.deductTotal);
     $('sal-net').textContent = kr(sum.net);
 
+    // 口径标识：让用户清楚看到这个月是「实算」还是「工资条固定值」
+    $('sal-mode').innerHTML = mode === 'attendance'
+      ? `<span class="mode-tag live">예상 · 按当月考勤实算</span>
+         <em>出勤天数、加班、夜班补助、扣除均随考勤变动，非固定值</em>`
+      : `<span class="mode-tag fixed">확정 · 工资条固定口径</span>
+         <em>기본급 按月薪计薪工时固定，用于与工资条逐笔核对</em>`;
+
+    // 发薪日：每月 17 日，逢周末提前至周五
+    const pd = Salary.payDateFor(y, m, p.payDay || 17);
+    $('sal-payday').innerHTML = `<span>급여일 发薪日</span>
+      <b>${y}년 ${pd.label}</b>
+      <em>${pd.adjusted ? `원래 ${m}/17 이 주말 → 앞당김（原 17 日逢周末，提前发放）` : '정상 正常'}</em>`;
+
     // 工资条表头信息
     $('sal-meta').innerHTML = [
       p.empNo && `사번<b>${p.empNo}</b>`,
       p.name && `성명<b>${p.name}</b>`,
       p.dept && `부서<b>${p.dept}</b>`,
+      (p.jobTitle || p.position) && `직급<b>${p.jobTitle || p.position}</b>`,
       p.hireDate && `입사일<b>${p.hireDate}</b>`,
-      p.position && `직급<b>${p.position}</b>`,
       `시급<b>${kr(st().hourlyRate)}원</b>`
     ].filter(Boolean).map(t => `<span>${t}</span>`).join('');
 
@@ -497,20 +594,53 @@
     $('sal-base').innerHTML = `보험료기준（社保基数）= 기본급 + 실액수당 = <b>${kr(sum.insurableBase)}원</b>`;
 
     // 근태내역
-    $('sal-attendance').innerHTML = [
+    const attRows = [
+      ['출근일수 出勤天数', `${sum.workDays}일`],
       ['총근로시간 总工时', `${sum.workHours.toFixed(1)}h`],
-      ['초과근로시간 加班', `${sum.otHours.toFixed(1)}h`],
-      ['야간근로시간 夜班', `${sum.nightHours.toFixed(1)}h`],
-      ['출근일수 出勤', `${sum.workDays}일`],
-      ['휴식일 休息', `${sum.restDays}일`]
-    ].map(([k, v]) => `<div class="rowline"><span>${k}</span><b>${v}</b></div>`).join('');
+      ['초과근로시간 加班', `${sum.otHours.toFixed(1)}h`]
+    ];
+    if (mode === 'attendance') {
+      attRows.push(
+        ['야간근로일 夜班天数', `${sum.nightDays}일`],
+        ['야간근로시간 夜班工时', `${sum.nightHours.toFixed(1)}h`],
+        ['휴일근로 节假日出勤', `${sum.holidayWorkDays}일`],
+        ['연차 有薪年假', `${sum.annualDays}일`],
+        ['휴식·결근 休息/缺勤', `${sum.restDays}일`]
+      );
+    } else {
+      attRows.push(
+        ['야간근로시간 夜班', `${sum.nightHours.toFixed(1)}h`],
+        ['휴식일 休息', `${sum.restDays}일`]
+      );
+    }
+    $('sal-attendance').innerHTML = attRows
+      .map(([k, v]) => `<div class="rowline"><span>${k}</span><b>${v}</b></div>`).join('');
+
+    // 퇴직금（按入职日期推算）
+    const sev = Salary.severance(p.hireDate, now, sum.gross);
+    $('sal-severance').innerHTML = sev.ok
+      ? `<div class="rowline"><span>근속기간 工龄</span><b>${sev.note}</b></div>
+         <div class="rowline"><span>1일 평균임금 日均工资</span><b>${kr(sev.dailyAvgWage)}원</b></div>
+         <div class="rowline total"><span>예상 퇴직금 预计退职金</span><b>${sev.eligible ? kr(sev.amount) + '원' : '—'}</b></div>
+         <div class="hint">${sev.eligible
+          ? '法定口径：1일 평균임금 × 30일 × 재직일수 ÷ 365。实际金额以公司结算为准。'
+          : '需在司满 1 年（365 日）才产生法定退职金。'}</div>`
+      : `<div class="hint">${sev.note}。请到【设置 → 직원档案】填写 입사일 入职日期。</div>`;
+
+    // 当月按考勤实算时，若所得税仍是「采用工资条固定税额」，给个明确提示
+    if (mode === 'attendance' && sum.taxIsFixed) {
+      $('sal-deductions').insertAdjacentHTML('afterbegin',
+        `<div class="hint warn">所得税沿用工资条固定值 ${kr(sum.incomeTax)}원；
+         当月预估建议到【设置 → 소득세】改为「按 6 级累进估算」。</div>`);
+    }
   }
 
   /* ---------- 核对 ---------- */
   function bindSalary() {
     $('btn-check').onclick = () => {
       const [y, m] = salMonth.split('-').map(Number);
-      const sum = Salary.calcMonth(y, m);
+      const now = new Date();
+      const sum = Salary.calcMonth(y, m, { mode: Salary.payrollModeFor(y, m, now), now });
       const input = Number($('actual-paid').value);
       const box = $('check-result');
       box.hidden = false;
@@ -552,7 +682,7 @@
     $('set-dept').value = p.dept || '';
     $('set-job-title').value = p.jobTitle || '';
     $('set-hire-date').value = p.hireDate || '';
-    $('set-pay-day').value = p.payDay || 16;
+    $('set-pay-day').value = p.payDay || 17;
 
     // 劳动条件
     $('set-hourly').value = s.hourlyRate;
@@ -566,9 +696,33 @@
     $('set-night-start').value = s.nightStart;
     $('set-night-end').value = s.nightEnd;
 
+    // 班次时间
+    const sh = s.shift || {};
+    $('set-weekly-work-days').value = sh.weeklyWorkDays ?? 5;
+    $('set-day-start').value = sh.dayStart || '08:20';
+    $('set-day-end').value = sh.dayEnd || '20:20';
+    $('set-night-shift-start').value = sh.nightStart || '20:20';
+    $('set-night-shift-end').value = sh.nightEnd || '08:20';
+    $('set-rest-minutes').value = s.restMinutes ?? 30;
+    $('set-mon-late').checked = sh.monLateStart !== false;
+    $('set-mon-start').value = sh.monDayStart || '10:20';
+    $('set-fri-early').checked = sh.friEarlyEnd !== false;
+    $('set-fri-end').value = sh.friNightEnd || '06:20';
+    $('mon-start-field').style.display = $('set-mon-late').checked ? 'flex' : 'none';
+    $('fri-end-field').style.display = $('set-fri-early').checked ? 'flex' : 'none';
+
+    // 日薪结构
+    const dp = s.dailyPay || {};
+    $('set-std-hours').value = dp.stdHours ?? 8;
+    $('set-fixed-ot').value = dp.fixedOtHours ?? 3.5;
+    $('set-night-allow-h').value = dp.nightAllowHours ?? 3.5;
+    $('set-night-allow-rate').value = dp.nightAllowRate ?? 0.5;
+    $('set-holiday-mul').value = dp.holidayMultiplier ?? 1.5;
+    $('set-annual-paid').checked = dp.annualLeavePaid !== false;
+
     // 出勤判定
-    $('set-work-start').value = s.workStart || '09:00';
-    $('set-work-end').value = s.workEnd || '18:00';
+    $('set-holiday-source').value = s.holidaySource || 'builtin';
+    $('set-include-labour').checked = s.includeLabourDay !== false;
     $('set-late-grace').value = s.lateGrace ?? 5;
     $('set-early-grace').value = s.earlyGrace ?? 5;
     $('set-holidays').value = (s.holidays || []).join(',');
@@ -659,17 +813,29 @@
       if (Number.isFinite(v) && v >= 0) { st()[key] = v; Store.save(); after && after(); }
       else toast('请输入有效数值');
     });
-    const bindProfile = (id, key) => bindField(id, e => {
-      Store.profile[key] = e.target.value; Store.save();
+    const bindProfile = (id, key, after) => bindField(id, e => {
+      Store.profile[key] = e.target.value; Store.save(); after && after();
+    });
+    const bindProfileNum = (id, key, min, max, after) => bindField(id, e => {
+      const v = Number(e.target.value);
+      if (!Number.isFinite(v) || v < min || v > max) { toast(`请输入 ${min}–${max} 之间的数值`); return; }
+      Store.profile[key] = v; Store.save(); after && after();
+    });
+    /** 写入 settings 的嵌套对象（如 shift.* / dailyPay.*） */
+    const bindSub = (id, group, key, cast, after) => bindField(id, e => {
+      const g = st()[group] || (st()[group] = {});
+      g[key] = cast === 'num' ? Number(e.target.value) : e.target.value;
+      Store.save(); after && after();
     });
 
-    // 员工档案
-    bindProfile('set-emp-no', 'empNo');
-    bindProfile('set-name', 'name');
-    bindProfile('set-dept', 'dept');
-    bindProfile('set-job-title', 'jobTitle');
-    bindProfile('set-hire-date', 'hireDate');
-    bindNum('set-pay-day', 'payDay');
+    // 员工档案（全部可自由修改）
+    bindProfile('set-emp-no', 'empNo', renderSalary);
+    bindProfile('set-name', 'name', renderSalary);
+    bindProfile('set-dept', 'dept', renderSalary);
+    bindProfile('set-job-title', 'jobTitle', renderSalary);
+    // 入职日期关联退职金，改动后要刷新月薪页
+    bindProfile('set-hire-date', 'hireDate', renderSalary);
+    bindProfileNum('set-pay-day', 'payDay', 1, 31, renderSalary);
 
     // 劳动条件
     bindNum('set-hourly', 'hourlyRate', renderSalary);
@@ -699,10 +865,49 @@
     bindField('set-night-start', e => { st().nightStart = e.target.value; Store.save(); renderSalary(); });
     bindField('set-night-end', e => { st().nightEnd = e.target.value; Store.save(); renderSalary(); });
 
-    // ---- 出勤判定规则 ----
+    // ---- 班次时间 ----
     const refreshAtt = () => { renderCalendar(); renderAttendance(); };
-    bindField('set-work-start', e => { st().workStart = e.target.value; Store.save(); refreshAtt(); });
-    bindField('set-work-end', e => { st().workEnd = e.target.value; Store.save(); refreshAtt(); });
+    const refreshAll = () => { renderCalendar(); renderAttendance(); renderSalary(); };
+    bindSub('set-weekly-work-days', 'shift', 'weeklyWorkDays', 'num', refreshAtt);
+    bindSub('set-day-start', 'shift', 'dayStart', 'str', refreshAtt);
+    bindSub('set-day-end', 'shift', 'dayEnd', 'str', refreshAtt);
+    bindSub('set-night-shift-start', 'shift', 'nightStart', 'str', refreshAtt);
+    bindSub('set-night-shift-end', 'shift', 'nightEnd', 'str', refreshAtt);
+    bindNum('set-rest-minutes', 'restMinutes', () => {
+      // 休息扣除改动要同步到历史记录，否则旧记录仍按旧值算工时
+      Object.keys(Store.attendance).forEach(k => { Store.attendance[k].restMinutes = st().restMinutes; });
+      Store.save(); refreshAll();
+    });
+    $('set-mon-late').onchange = e => {
+      st().shift.monLateStart = e.target.checked; Store.save();
+      $('mon-start-field').style.display = e.target.checked ? 'flex' : 'none';
+      refreshAtt();
+    };
+    bindSub('set-mon-start', 'shift', 'monDayStart', 'str', refreshAtt);
+    $('set-fri-early').onchange = e => {
+      st().shift.friEarlyEnd = e.target.checked; Store.save();
+      $('fri-end-field').style.display = e.target.checked ? 'flex' : 'none';
+      refreshAtt();
+    };
+    bindSub('set-fri-end', 'shift', 'friNightEnd', 'str', refreshAtt);
+
+    // ---- 日薪结构 ----
+    bindSub('set-std-hours', 'dailyPay', 'stdHours', 'num', renderSalary);
+    bindSub('set-fixed-ot', 'dailyPay', 'fixedOtHours', 'num', renderSalary);
+    bindSub('set-night-allow-h', 'dailyPay', 'nightAllowHours', 'num', renderSalary);
+    bindSub('set-night-allow-rate', 'dailyPay', 'nightAllowRate', 'num', renderSalary);
+    bindSub('set-holiday-mul', 'dailyPay', 'holidayMultiplier', 'num', renderSalary);
+    $('set-annual-paid').onchange = e => {
+      st().dailyPay.annualLeavePaid = e.target.checked; Store.save(); renderSalary();
+    };
+
+    // ---- 出勤判定规则 ----
+    bindField('set-holiday-source', e => {
+      st().holidaySource = e.target.value; Store.save(); refreshAtt();
+    });
+    $('set-include-labour').onchange = e => {
+      st().includeLabourDay = e.target.checked; Store.save(); refreshAtt();
+    };
     bindNum('set-late-grace', 'lateGrace', refreshAtt);
     bindNum('set-early-grace', 'earlyGrace', refreshAtt);
     bindField('set-holidays', e => {

@@ -7,14 +7,15 @@ const Store = (() => {
   const KEY = 'salary_keeper_v1';
 
   const DEFAULTS = {
-    // ===== 员工档案（按 2026-09 工资条）=====
+    // ===== 员工档案（按 2026-09 工资条；可在设置页随意修改）=====
     profile: {
-      empNo: '0581',        // 사번
-      name: '이형화',        // 성명
-      dept: '성형부',        // 부서
-      jobTitle: '',         // 직급
-      hireDate: '2022/06/01', // 입사일
-      payDay: 16// 급여일（每月16日发薪）
+      empNo: '0581',           // 사번
+      name: '이형화',           // 성명
+      dept: '성형부',           // 부서
+      jobTitle: '',            // 직급
+      position: '',            // 직위（备用）
+      hireDate: '2022/06/01',  // 입사일（退职金按此计算工龄）
+      payDay: 17               // 급여일：每月 17 日，逢周末提前至周五
     },
 
     settings: {
@@ -67,17 +68,47 @@ const Store = (() => {
         { min: 30000000, max: null,      rate: 0.45, localRate: 0.10 }
       ],
 
+      // ===== 班次时间（白班 / 夜班）=====
+      // 白班 08:20–20:20；夜班 20:20–次日 08:20（正好相反）
+      // 周上 5 天时：白班周一晚 2 小时上班（10:20）；夜班周五早 2 小时下班（06:20）
+      shift: {
+        dayStart: '08:20',       // 백근 출근
+        dayEnd: '20:20',         // 백근 퇴근
+        nightStart: '20:20',     // 야근 출근
+        nightEnd: '08:20',       // 야근 퇴근（次日）
+        weeklyWorkDays: 5,       // 주당 근무일수
+        monLateStart: true,      // 白班周一晚 2 小时上班
+        monDayStart: '10:20',
+        friEarlyEnd: true,       // 夜班周五早 2 小时下班
+        friNightEnd: '06:20'
+      },
+
+      // ===== 日薪结构：标准 8h + 固定加班 3.5h(×1.5)；夜班再加 3.5h 夜班补助 =====
+      dailyPay: {
+        stdHours: 8,             // 기준근로 标准工时
+        fixedOtHours: 3.5,       // 고정연장근로 每日固定加班
+        nightAllowHours: 3.5,    // 야간수당 지급시간 夜班补助计发小时
+        nightAllowRate: 0.5,     // 야간수당 가산율（韩国法定 +50%）
+        holidayMultiplier: 1.5,  // 휴일근로 节假日出勤全天倍率
+        annualLeavePaid: true    // 연차 年假是否带薪（按标准工时计）
+      },
+
       // ===== 出勤判定规则（迟到/早退/请假，供月历状态用）=====
-      workStart: '09:00',        // 표준출근 标准上班时间
-      workEnd: '18:00',          // 표준퇴근 标准下班时间
+      workStart: '08:20',        // 표준출근 标准上班时间
+      workEnd: '20:20',          // 표준퇴근 标准下班时间
       lateGrace: 5,              // 지각허용 迟到宽限（分钟）
       earlyGrace: 5,             // 조퇴허용 早退宽限（分钟）
       restWeekdays: [0],         // 주휴일 每周休息日（0=周日）
-      holidays: [],              // 공휴일 法定节假日 ['2026-10-01', ...]
+      holidays: [],              // 공휴일 自定义节假日 ['2026-10-01', ...]
+      holidaySource: 'builtin',  // builtin=内置韩国法定假日 | custom=仅自定义 | both=两者
+      includeLabourDay: true,    // 是否把 근로자의 날(5/1) 计入假日
 
-      // 夜班时段（用于统计 야간근로시간）
+      // 夜班时段（법정 야간근로 22:00–06:00，用于统计 야간근로시간）
       nightStart: '22:00',
       nightEnd: '06:00',
+
+      // 每日休息扣除时间（分钟）
+      restMinutes: 30,
 
       // 地理围栏
       fence: { lat: 0, lng: 0, radius: 200, name: '公司' },
@@ -89,7 +120,8 @@ const Store = (() => {
       reentryGuard: 30,
     },
     attendance: {},   // { 'YYYY-MM-DD': { shiftType, segments:[{in,out}], restMinutes, perf, isRestDay } }
-    actualPaid: {},   // { 'YYYY-MM': amount }
+    actualPaid: {},   // { 'YYYY-MM': amount } 工资条实发（核对用）
+    payslips: {},     // { 'YYYY-MM': {gross, deduct, net, at} } 已归档的工资条固定值
     curMonthOffset: 0
   };
 
@@ -107,7 +139,8 @@ const Store = (() => {
       state.attendance[dateStr] = {
         shiftType: 'day',
         segments: [],
-        restMinutes: 60,
+        restMinutes: (state.settings && state.settings.restMinutes != null)
+          ? state.settings.restMinutes : 30,
         perf: 1.0,
         isRestDay: false,
         leave: null,     // { type, note } 请假
@@ -223,10 +256,19 @@ const Store = (() => {
       // 合并默认值，兼容旧数据（旧版无 profile / allowances）
       s.profile = Object.assign(s.profile, parsed.profile || {});
       s.settings = Object.assign(s.settings, parsed.settings || {});
-      s.settings.fence = Object.assign(DEFAULTS.settings.fence, (parsed.settings || {}).fence || {});
+      // 嵌套对象也要合并，否则老数据升级后会丢掉新增的子字段
+      ['fence', 'shift', 'dailyPay'].forEach(k => {
+        s.settings[k] = Object.assign(DEFAULTS.settings[k], (parsed.settings || {})[k] || {});
+      });
+      // 数组类配置：以存量数据为准（用户可能已增删），缺省才回落到默认
+      ['allowances', 'deductions', 'taxBrackets', 'restWeekdays', 'holidays'].forEach(k => {
+        const v = (parsed.settings || {})[k];
+        if (Array.isArray(v)) s.settings[k] = v;
+      });
       if (parsed.settings?.issues) s.settings.issues = parsed.settings.issues;
       s.attendance = parsed.attendance || {};
       s.actualPaid = parsed.actualPaid || {};
+      s.payslips = parsed.payslips || {};
       return s;
     } catch (e) {
       console.error('读取本地数据失败', e);
@@ -249,11 +291,30 @@ const Store = (() => {
     get attendance() { return state.attendance; },
     get profile() { return state.profile; },
     get actualPaid() { return state.actualPaid; },
+    get payslips() { return state.payslips; },
 
     save,
     day,
     peek,
     hasAnyRecord,
+
+    /* ---------- 工资条归档（前月固定值） ---------- */
+    /** 归档某月工资条固定值；传 null 表示取消归档 */
+    setPayslip(monthKey, data) {
+      if (!data) { delete state.payslips[monthKey]; }
+      else {
+        state.payslips[monthKey] = {
+          gross: Math.round(Number(data.gross) || 0),
+          deduct: Math.round(Number(data.deduct) || 0),
+          net: Math.round(Number(data.net) || 0),
+          items: Array.isArray(data.items) ? data.items : [],
+          at: new Date().toISOString()
+        };
+      }
+      save();
+    },
+
+    getPayslip(monthKey) { return state.payslips[monthKey] || null; },
 
     /** 覆盖某月考勤（键形如 'YYYY-MM'），用于按工资条导入/校准 */
     replaceMonth(monthKey, records) {
@@ -287,6 +348,7 @@ const Store = (() => {
       s.settings.fence = Object.assign(DEFAULTS.settings.fence, (data.settings || {}).fence || {});
       s.attendance = data.attendance || {};
       s.actualPaid = data.actualPaid || {};
+      s.payslips = data.payslips || {};
       state = s;
       save();
     },
