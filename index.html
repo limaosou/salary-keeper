@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#F7A600">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
+<title>工资通 · 考勤计薪核对</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ 今日 ============ -->
+  <section class="page" id="page-today">
+    <header class="hero">
+      <div class="hero-top">
+        <div>
+          <div class="hero-label">今日已赚取</div>
+          <div class="hero-amount"><span class="cur" id="today-currency">¥</span><span id="today-earned">0.00</span></div>
+          <div class="hero-sub" id="today-status">尚未打卡</div>
+        </div>
+        <button class="shift-toggle" id="shift-toggle">
+          <span id="shift-label">白班</span>
+        </button>
+      </div>
+      <div class="hero-grid">
+        <div class="hero-cell"><span id="today-worked">0h00m</span><i>已工时</i></div>
+        <div class="hero-cell"><span id="today-ot">0h00m</span><i>加班</i></div>
+        <div class="hero-cell"><span id="today-segments">0</span><i>打卡段</i></div>
+      </div>
+    </header>
+
+    <div class="card punch-card">
+      <div class="punch-state" id="punch-state">
+        <div class="dot" id="punch-dot"></div>
+        <div class="punch-text">
+          <b id="punch-title">地理围栏待机中</b>
+          <span id="punch-desc">开启定位后，进入公司区域自动签到</span>
+        </div>
+      </div>
+      <div class="punch-actions">
+        <button class="btn btn-primary" id="btn-manual-in">手动签到</button>
+        <button class="btn btn-ghost" id="btn-manual-out">手动签退</button>
+      </div>
+      <label class="switch-row">
+        <span>自动打卡（地理围栏）</span>
+        <input type="checkbox" id="auto-punch-switch">
+        <em class="switch"></em>
+      </label>
+    </div>
+
+    <div class="card">
+      <div class="card-title">今日明细</div>
+      <div class="rowline"><span>正常工时工资</span><b id="d-base">0.00</b></div>
+      <div class="rowline"><span>加班费（<i id="d-ot-rate">1.5</i> 倍）</span><b id="d-ot">0.00</b></div>
+      <div class="rowline"><span>夜班补助</span><b id="d-night">0.00</b></div>
+      <div class="rowline total"><span>当日合计</span><b id="d-total">0.00</b></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">休息扣除</div>
+      <div class="stepper">
+        <button class="step-btn" id="rest-minus">−</button>
+        <span id="rest-value">60 分钟</span>
+        <button class="step-btn" id="rest-plus">+</button>
+      </div>
+      <div class="hint">午休等不计薪时长，从当日工时中扣除</div>
+    </div>
+  </section>
+
+  <!-- ============ 考勤 ============ -->
+  <section class="page" id="page-attendance" hidden>
+    <div class="month-nav">
+      <button id="prev-month">‹</button>
+      <b id="cur-month">2026-10</b>
+      <button id="next-month">›</button>
+    </div>
+    <div class="card">
+      <div class="card-title">当月统计</div>
+      <div class="hero-grid three">
+        <div class="hero-cell"><span id="m-days">0 天</span><i>出勤</i></div>
+        <div class="hero-cell"><span id="m-hours">0h</span><i>总工时</i></div>
+        <div class="hero-cell"><span id="m-earn">0.00</span><i>已赚</i></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">每日记录</div>
+      <div id="att-list" class="att-list"></div>
+    </div>
+  </section>
+
+  <!-- ============ 月薪 ============ -->
+  <section class="page" id="page-salary" hidden>
+    <div class="month-nav">
+      <button id="sal-prev-month">‹</button>
+      <b id="sal-cur-month">2026-10</b>
+      <button id="sal-next-month">›</button>
+    </div>
+
+    <div class="card salary-card">
+      <div class="salary-head">
+        <div><i>应发工资</i><b id="sal-gross">0.00</b></div>
+        <div class="arrow">−</div>
+        <div><i>扣除合计</i><b id="sal-deduct">0.00</b></div>
+        <div class="arrow">=</div>
+        <div class="net"><i>实发工资</i><b id="sal-net">0.00</b></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">应发构成</div>
+      <div id="sal-breakdown"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">扣除项目</div>
+      <div id="sal-deductions"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">核对老板实发</div>
+      <div class="paycheck-row">
+        <input type="number" id="actual-paid" placeholder="输入老板实际发放金额">
+        <button class="btn btn-primary" id="btn-check">核对</button>
+      </div>
+      <div id="check-result" class="check-result" hidden></div>
+    </div>
+  </section>
+
+  <!-- ============ 设置 ============ -->
+  <section class="page" id="page-settings" hidden>
+    <div class="card">
+      <div class="card-title">计薪标准</div>
+      <div class="field"><label>时薪（元/小时）</label><input type="number" id="set-hourly" step="0.01"></div>
+      <div class="field"><label>标准日工时（小时）</label><input type="number" id="set-std" step="0.5"></div>
+      <div class="field"><label>加班倍率</label><input type="number" id="set-ot" step="0.1"></div>
+      <div class="field"><label>货币符号</label><input type="text" id="set-currency" maxlength="2"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">夜班补助</div>
+      <div class="field"><label>夜班时段起</label><input type="time" id="set-night-start"></div>
+      <div class="field"><label>夜班时段止</label><input type="time" id="set-night-end"></div>
+      <div class="field">
+        <label>补助方式</label>
+        <select id="set-night-mode">
+          <option value="perHour">按夜班工时（元/小时）</option>
+          <option value="fixed">每班固定（元/班）</option>
+        </select>
+      </div>
+      <div class="field"><label>补助金额</label><input type="number" id="set-night-amount" step="0.01"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">绩效</div>
+      <div class="field">
+        <label>绩效应用方式</label>
+        <select id="set-perf-mode">
+          <option value="daily">按日设置（每日考勤里填）</option>
+          <option value="monthly">整月统一系数</option>
+        </select>
+      </div>
+      <div class="field" id="perf-monthly-field"><label>当月绩效系数</label><input type="number" id="set-perf" step="0.01" min="0"></div>
+      <div class="hint">绩效系数作用于正常工时工资，如 1.0 为全额、1.1 为上浮 10%</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">公司地理围栏</div>
+      <div class="field"><label>公司名称</label><input type="text" id="set-fence-name"></div>
+      <div class="field"><label>纬度</label><input type="number" id="set-fence-lat" step="0.000001"></div>
+      <div class="field"><label>经度</label><input type="number" id="set-fence-lng" step="0.000001"></div>
+      <div class="field">
+        <label>围栏半径：<b id="fence-radius-label">200 米</b></label>
+        <input type="range" id="set-fence-radius" min="50" max="1000" step="10">
+      </div>
+      <button class="btn btn-ghost" id="btn-locate">📍 获取当前位置为公司坐标</button>
+      <div class="hint">建议到公司门口点一下"获取当前位置"，半径 100–300 米即可；GPS 有漂移，如误触发可适当加大半径</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">扣除项目管理</div>
+      <div id="deduct-list"></div>
+      <div class="deduct-add">
+        <input type="text" id="new-deduct-name" placeholder="名称，如：健康保险费">
+        <select id="new-deduct-type">
+          <option value="percent">按比例 %</option>
+          <option value="fixed">固定金额</option>
+          <option value="tax">个税累进</option>
+        </select>
+        <input type="number" id="new-deduct-value" placeholder="数值" step="0.01">
+        <button class="btn btn-primary" id="btn-add-deduct">添加</button>
+      </div>
+      <div class="hint">"个税累进"按下方税率表计算，无需填数值</div>
+      <div class="tax-table" id="tax-table"></div>
+      <button class="btn btn-ghost" id="btn-edit-tax">编辑税率表</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">数据</div>
+      <button class="btn btn-ghost" id="btn-export">导出备份（JSON）</button>
+      <button class="btn btn-ghost" id="btn-import">导入备份（JSON）</button>
+      <input type="file" id="import-file" accept=".json,application/json" hidden>
+      <button class="btn btn-ghost danger" id="btn-reset">清空全部数据</button>
+      <div class="hint">电脑上配置好后导出备份，手机导入即可免去重复填写；数据只存在本机，换设备不会自动同步</div>
+    </div>
+  </section>
+
+  <!-- ============ 底部导航 ============ -->
+  <nav class="tabbar">
+    <button class="tab active" data-page="today"><i>💰</i><span>今日</span></button>
+    <button class="tab" data-page="attendance"><i>📅</i><span>考勤</span></button>
+    <button class="tab" data-page="salary"><i>🧾</i><span>月薪</span></button>
+    <button class="tab" data-page="settings"><i>⚙️</i><span>设置</span></button>
+  </nav>
+
+  <div id="toast" class="toast" hidden></div>
+</div>
+
+<script src="js/storage.js"></script>
+<script src="js/salary.js"></script>
+<script src="js/geo.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
