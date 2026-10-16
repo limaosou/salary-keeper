@@ -41,10 +41,13 @@
     seg.outReason = reason;
     Store.save();
     refreshToday();
-    const r = Salary.calcDay(rec, ds);
+    const r = Salary.calcDay(rec, ds, { nowForOpen: new Date() });
+    const s = st();
+    const kr = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
+    const dayPay = r.workHours * s.hourlyRate + r.otHours * s.hourlyRate * s.overtimeMultiplier;
     toast(auto
-      ? `📍 已离开公司区域，自动签退 · 今日合计 ${M(r.total)}`
-      : `✅ 已签退 · 今日合计 ${M(r.total)}`);
+      ? `\u{1F4CD} 已离开公司区域，自动签退 · 今日 ${r.workHours.toFixed(1)}h · ${kr(dayPay)}원`
+      : `✅ 已签退 · 今日 ${r.workHours.toFixed(1)}h · ${kr(dayPay)}원`);
     return true;
   }
 
@@ -139,9 +142,15 @@
     const rec = Store.attendance[ds];
     const active = rec && Store.activeSegment(rec);
     const r = Salary.calcDay(rec || { segments: [], restMinutes: 0, isRestDay: false }, ds, { nowForOpen: new Date() });
+    const s = st();
+    const kr = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
 
-    $('today-earned').textContent = money(r.total);
-    $('today-currency').textContent = curSym();
+    // 月薪制下当日金额 = 基本工资折算时薪 × 工时 + 加班（时薪×倍率）
+    const dailyBase = r.workHours * s.hourlyRate;
+    const dailyOT = r.otHours * s.hourlyRate * s.overtimeMultiplier;
+
+    $('today-earned').textContent = kr(dailyBase + dailyOT);
+    $('today-currency').textContent = '₩';
     $('today-worked').textContent = Salary.fmtHM(r.workHours * 3600000);
     $('today-ot').textContent = Salary.fmtHM(r.otHours * 3600000);
     $('today-segments').textContent = r.segCount;
@@ -150,7 +159,7 @@
     if (!rec || !rec.segments.length) {
       $('today-status').textContent = '尚未打卡';
       $('punch-title').textContent = GeoPunch.running() ? '监听中 · 等待进入区域' : '地理围栏待机中';
-      $('punch-desc').textContent = st().fence.lat ? '进入公司区域自动签到' : '请先到【设置】配置公司位置';
+      $('punch-desc').textContent = s.fence.lat ? '进入公司区域自动签到' : '请先到【设置】配置公司位置';
     } else if (active) {
       const t = new Date(active.in);
       $('today-status').textContent = `打卡中 · ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')} 起`;
@@ -159,7 +168,7 @@
     } else {
       $('today-status').textContent = '已结束当日考勤';
       $('punch-title').textContent = '今日已签退';
-      $('punch-desc').textContent = '当日收入已定格';
+      $('punch-desc').textContent = '当日工时已定格';
     }
 
     // 打卡状态点
@@ -168,12 +177,12 @@
     $('btn-manual-in').disabled = !!active;
     $('btn-manual-out').disabled = !active;
 
-    // 明细
-    $('d-base').textContent = money(r.basePay);
-    $('d-ot').textContent = money(r.otPay);
-    $('d-night').textContent = money(r.nightPay);
-    $('d-total').textContent = money(r.total);
-    $('d-ot-rate').textContent = st().overtimeMultiplier;
+    // 当日明细（时薪折算）
+    $('d-base').textContent = kr(dailyBase);
+    $('d-ot').textContent = kr(dailyOT);
+    $('d-night').textContent = `${r.nightHours.toFixed(1)}h`;
+    $('d-total').textContent = kr(dailyBase + dailyOT);
+    $('d-ot-rate').textContent = s.overtimeMultiplier;
 
     // 休息分钟
     if (rec) $('rest-value').textContent = `${rec.restMinutes} 分钟`;
@@ -236,13 +245,16 @@
       const open = !!Store.activeSegment(rec);
       const times = rec.segments.map(sg =>
         `${fmtTime(sg.in)}–${sg.out ? fmtTime(sg.out) : '未签退'}`).join('　');
+      const krN = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
+      const dayPay = (r.workHours || 0) * st().hourlyRate
+        + (r.otHours || 0) * st().hourlyRate * st().overtimeMultiplier;
       const tag = rest ? '<span class="tag rest">休息日</span>'
         : `<span class="tag ${rec.shiftType}">${rec.shiftType === 'night' ? '夜班' : '白班'}</span>`;
       return `<div class="att-item" data-date="${dateStr}" data-open="${open}">
         <div class="att-date"><b>${d.getDate()}</b><i>周${wk}</i></div>
         <div class="att-info"><b>${times || '未打卡'}${tag}</b>
           <span>${rest ? '休息不计薪' : `工时 ${r.workHours.toFixed(1)}h · 加班 ${r.otHours.toFixed(1)}h${r.perf !== 1 ? ` · 绩效 ${r.perf}` : ''}`}${open ? ' · 点击补结算' : ''}</span></div>
-        <div class="att-money">${rest ? '—' : M(r.total)}</div>
+        <div class="att-money">${rest ? '—' : krN(dayPay)}</div>
       </div>`;
     }).reverse().join('');
 
@@ -268,23 +280,50 @@
     const [y, m] = salMonth.split('-').map(Number);
     $('sal-cur-month').textContent = salMonth;
     const sum = Salary.calcMonth(y, m);
+    const p = Store.profile;
 
-    $('sal-gross').textContent = M(sum.gross);
-    $('sal-deduct').textContent = '−' + M(sum.deductTotal);
-    $('sal-net').textContent = M(sum.net);
+    // 韩元无小数，用千分位
+    const kr = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
 
+    $('sal-gross').textContent = kr(sum.gross);
+    $('sal-deduct').textContent = kr(sum.deductTotal);
+    $('sal-net').textContent = kr(sum.net);
+
+    // 工资条表头信息
+    $('sal-meta').innerHTML = [
+      p.empNo && `사번<b>${p.empNo}</b>`,
+      p.name && `성명<b>${p.name}</b>`,
+      p.dept && `부서<b>${p.dept}</b>`,
+      p.hireDate && `입사일<b>${p.hireDate}</b>`,
+      p.position && `직급<b>${p.position}</b>`,
+      `시급<b>${kr(st().hourlyRate)}원</b>`
+    ].filter(Boolean).map(t => `<span>${t}</span>`).join('');
+
+    // 지급내역
     $('sal-breakdown').innerHTML = (sum.perfNote ? `<div class="hint" style="margin:0 0 8px">${sum.perfNote}</div>` : '') +
-      [
-        ['正常工时工资', sum.baseSum, `${sum.workHours.toFixed(1)}h`],
-        ['加班费', sum.otSum, `${sum.otHours.toFixed(1)}h`],
-        ['夜班补助', sum.nightSum, `${sum.nightHours.toFixed(1)}h`]
-      ].map(([n, v, s]) => `<div class="rowline"><span>${n} <i>${s}</i></span><b>${M(v)}</b></div>`).join('')
-      + `<div class="rowline total"><span>应发合计</span><b>${M(sum.gross)}</b></div>`;
+      sum.grossItems.map(it => `<div class="rowline">
+        <span>${it.name} <i>${it.nameCn || ''}</i><em class="f">${it.formula || ''}</em></span>
+        <b>${kr(it.amount)}</b></div>`).join('')
+      + `<div class="rowline total"><span>지급합계 · 应发合计</span><b>${kr(sum.gross)}</b></div>`;
 
+    // 공제내역（去掉重复的「保险基数」前缀，公式文本里已含基数说明）
     $('sal-deductions').innerHTML = sum.deductions.length
-      ? sum.deductions.map(d => `<div class="rowline"><span>${d.label}</span><b>−${M(d.amount)}</b></div>`).join('')
-        + `<div class="rowline total"><span>扣除合计</span><b>−${M(sum.deductTotal)}</b></div>`
+      ? sum.deductions.map(d => `<div class="rowline">
+          <span>${d.name} <i>${d.nameCn || ''}</i><em class="f">${d.formula || ''}</em></span>
+          <b>−${kr(d.amount)}</b></div>`).join('')
+        + `<div class="rowline total"><span>공제합계 · 扣除合计</span><b>−${kr(sum.deductTotal)}</b></div>`
       : '<div class="att-empty">未配置扣除项目</div>';
+
+    $('sal-base').innerHTML = `보험료기준（社保基数）= 기본급 + 실액수당 = <b>${kr(sum.insurableBase)}원</b>`;
+
+    // 근태내역
+    $('sal-attendance').innerHTML = [
+      ['총근로시간 总工时', `${sum.workHours.toFixed(1)}h`],
+      ['초과근로시간 加班', `${sum.otHours.toFixed(1)}h`],
+      ['야간근로시간 夜班', `${sum.nightHours.toFixed(1)}h`],
+      ['출근일수 出勤', `${sum.workDays}일`],
+      ['휴식일 休息', `${sum.restDays}일`]
+    ].map(([k, v]) => `<div class="rowline"><span>${k}</span><b>${v}</b></div>`).join('');
   }
 
   /* ---------- 核对 ---------- */
@@ -295,16 +334,19 @@
       const input = Number($('actual-paid').value);
       const box = $('check-result');
       box.hidden = false;
-      if (!input) { toast('请输入老板实际发放金额'); return; }
-      const diff = input - sum.net;
-      if (Math.abs(diff) < 0.005) {
+      if (!input) { toast('请输入工资条上的 차인지급액'); return; }
+      const kr = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
+      const diff = Math.round(input) - Math.round(sum.net);
+      if (Math.abs(diff) === 0) {
         box.className = 'check-result ok';
-        box.innerHTML = `✅ <b>完全一致</b><br>老板实发 ${M(input)} = 系统实发 ${M(sum.net)}，工资无误。`;
+        box.innerHTML = `✅ <b>完全一致</b><br>工资条 실수령 ${kr(input)}원 = 系统实发 ${kr(sum.net)}원，工资无误。`;
       } else {
+        // 差异定位信息：保险基数、所得税、加班工时是核对重点
         box.className = 'check-result bad';
-        box.innerHTML = `⚠️ <b>存在差额 ${M(Math.abs(diff))}</b>（老板${diff > 0 ? '多发' : '少发'}了）<br>
-          系统应发 ${M(sum.gross)} − 扣除 ${M(sum.deductTotal)} = 实发 ${M(sum.net)}<br>
-          老板实发 ${M(input)}，可逐项核对扣除项目是否一致。`;
+        box.innerHTML = `⚠️ <b>存在差额 ${kr(Math.abs(diff))}원</b>（工资条${diff > 0 ? '多发' : '少发'}了）<br>
+          系统：应发 ${kr(sum.gross)} − 扣除 ${kr(sum.deductTotal)} = 实发 ${kr(sum.net)}<br>
+          工资条：实发 ${kr(input)}원<br>
+          保险基数 ${kr(sum.insurableBase)}원 · 所得税 ${kr(sum.incomeTax)}원 · 加班 ${sum.otHours.toFixed(1)}h`;
       }
     };
 
@@ -322,17 +364,38 @@
   /* ---------- 设置页 ---------- */
   function renderSettings() {
     const s = st();
+    const p = Store.profile;
+
+    // 员工档案
+    $('set-emp-no').value = p.empNo || '';
+    $('set-name').value = p.name || '';
+    $('set-dept').value = p.dept || '';
+    $('set-job-title').value = p.jobTitle || '';
+    $('set-hire-date').value = p.hireDate || '';
+    $('set-pay-day').value = p.payDay || 16;
+
+    // 劳动条件
     $('set-hourly').value = s.hourlyRate;
-    $('set-std').value = s.standardHours;
+    $('set-monthly-mode').value = s.monthlyHoursMode || 'fixed';
+    $('set-monthly-hours').value = s.monthlyHours || 176;
+    $('set-weekly-hours').value = s.weeklyHours;
+    $('set-weekly-days').value = s.weeklyDays;
+    $('set-daily-hours').value = s.dailyHours;
     $('set-ot').value = s.overtimeMultiplier;
-    $('set-currency').value = s.currency;
+    $('set-bonus').value = s.bonusMultiplier;
     $('set-night-start').value = s.nightStart;
     $('set-night-end').value = s.nightEnd;
-    $('set-night-mode').value = s.nightMode;
-    $('set-night-amount').value = s.nightAmount;
     $('set-perf-mode').value = s.perfMode;
     $('set-perf').value = s.perfMonthly;
     $('perf-monthly-field').style.display = s.perfMode === 'monthly' ? 'flex' : 'none';
+    $('monthly-hours-field').style.display = (s.monthlyHoursMode || 'fixed') === 'auto' ? 'none' : 'flex';
+
+    // 所得税
+    $('set-tax-mode').value = s.taxMode || 'manual';
+    $('set-tax-amount').value = s.taxManualAmount || 0;
+    $('tax-manual-field').style.display = (s.taxMode || 'manual') === 'manual' ? 'flex' : 'none';
+    $('set-local-tax-floor').checked = s.localTaxFloor !== false;
+
     $('set-fence-name').value = s.fence.name;
     $('set-fence-lat').value = s.fence.lat || '';
     $('set-fence-lng').value = s.fence.lng || '';
@@ -343,8 +406,50 @@
     renderSyncUrl();
     renderIssues();
 
+    renderAllowList();
     renderDeductList();
     renderTaxTable();
+  }
+
+  /** 津贴列表：显示公式说明与开关 */
+  function renderAllowList() {
+    const list = st().allowances || [];
+    $('allow-list').innerHTML = list.length ? list.map(a => {
+      const typeTxt = { fixed: '固定额', formulaWeekly: '周薪公式', formulaOT: '加班公式', formulaBonus: '奖金公式' }[a.type] || a.type;
+      const valTxt = a.type === 'fixed' ? `${Number(a.value || 0).toLocaleString()}원`
+        : `<em>${typeTxt}</em>`;
+      return `<div class="issue-item">
+        <b>${a.name}</b>
+        <span style="flex:1">${a.nameCn || ''} ${valTxt}</span>
+        <button class="del" data-id="${a.id}">×</button></div>`;
+    }).join('') : '<div class="att-empty">暂无津贴项</div>';
+    $('allow-list').querySelectorAll('.del').forEach(btn => btn.onclick = () => {
+      st().allowances = st().allowances.filter(a => a.id !== btn.dataset.id);
+      Store.save(); renderAllowList(); renderSalary();
+    });
+  }
+
+  /** 扣除列表：显示计算基数说明 */
+  function renderDeductList() {
+    const list = st().deductions || [];
+    const typeTxt = {
+      percentOfBase: '保险基数%', percentOfGross: '应发%',
+      percentOfIncomeTax: '所得税%', koreanTax: '累进', fixed: '固定额'
+    };
+    $('deduct-list').innerHTML = list.length ? list.map(d => {
+      const val = d.type === 'percentOfBase' || d.type === 'percentOfGross' || d.type === 'percentOfIncomeTax'
+        ? `${Number(d.value || 0)}%`
+        : d.type === 'fixed' ? `${Number(d.value || 0).toLocaleString()}원`
+          : '累进';
+      return `<div class="issue-item">
+        <b>${d.name}</b>
+        <span style="flex:1">${d.nameCn || ''} · ${typeTxt[d.type] || d.type} ${val}</span>
+        <button class="del" data-id="${d.id}">×</button></div>`;
+    }).join('') : '<div class="att-empty">暂无扣除项</div>';
+    $('deduct-list').querySelectorAll('.del').forEach(btn => btn.onclick = () => {
+      st().deductions = st().deductions.filter(d => d.id !== btn.dataset.id);
+      Store.save(); renderDeductList(); renderSalary();
+    });
   }
 
   function bindSettings() {
@@ -359,20 +464,49 @@
       if (Number.isFinite(v) && v >= 0) { st()[key] = v; Store.save(); after && after(); }
       else toast('请输入有效数值');
     });
-    bindNum('set-hourly', 'hourlyRate', refreshToday);
-    bindNum('set-std', 'standardHours', refreshToday);
-    bindNum('set-ot', 'overtimeMultiplier', refreshToday);
-    bindNum('set-night-amount', 'nightAmount', refreshToday);
-    bindNum('set-perf', 'perfMonthly', refreshToday);
+    const bindProfile = (id, key) => bindField(id, e => {
+      Store.profile[key] = e.target.value; Store.save();
+    });
 
-    bindField('set-currency', e => { st().currency = e.target.value || '¥'; Store.save(); refreshToday(); });
-    bindField('set-night-start', e => { st().nightStart = e.target.value; Store.save(); refreshToday(); });
-    bindField('set-night-end', e => { st().nightEnd = e.target.value; Store.save(); refreshToday(); });
-    bindField('set-night-mode', e => { st().nightMode = e.target.value; Store.save(); refreshToday(); });
+    // 员工档案
+    bindProfile('set-emp-no', 'empNo');
+    bindProfile('set-name', 'name');
+    bindProfile('set-dept', 'dept');
+    bindProfile('set-job-title', 'jobTitle');
+    bindProfile('set-hire-date', 'hireDate');
+    bindNum('set-pay-day', 'payDay');
+
+    // 劳动条件
+    bindNum('set-hourly', 'hourlyRate', renderSalary);
+    bindNum('set-monthly-hours', 'monthlyHours', renderSalary);
+    bindNum('set-weekly-hours', 'weeklyHours', renderSalary);
+    bindNum('set-weekly-days', 'weeklyDays', renderSalary);
+    bindNum('set-daily-hours', 'dailyHours', renderSalary);
+    bindField('set-monthly-mode', e => {
+      st().monthlyHoursMode = e.target.value; Store.save();
+      $('monthly-hours-field').style.display = e.target.value === 'auto' ? 'none' : 'flex';
+      renderSalary();
+    });
+    bindNum('set-ot', 'overtimeMultiplier', renderSalary);
+    bindNum('set-bonus', 'bonusMultiplier', renderSalary);
+    bindNum('set-tax-amount', 'taxManualAmount', renderSalary);
+    bindNum('set-perf', 'perfMonthly', renderSalary);
+
+    bindField('set-tax-mode', e => {
+      st().taxMode = e.target.value; Store.save();
+      $('tax-manual-field').style.display = e.target.value === 'manual' ? 'flex' : 'none';
+      renderSalary();
+    });
+    $('set-local-tax-floor').onchange = e => {
+      st().localTaxFloor = e.target.checked; Store.save(); renderSalary();
+    };
+
+    bindField('set-night-start', e => { st().nightStart = e.target.value; Store.save(); renderSalary(); });
+    bindField('set-night-end', e => { st().nightEnd = e.target.value; Store.save(); renderSalary(); });
     bindField('set-perf-mode', e => {
       st().perfMode = e.target.value; Store.save();
       $('perf-monthly-field').style.display = e.target.value === 'monthly' ? 'flex' : 'none';
-      refreshToday();
+      renderSalary();
     });
 
     bindField('set-fence-name', e => { st().fence.name = e.target.value; Store.save(); });
@@ -434,11 +568,23 @@
       const type = $('new-deduct-type').value;
       const value = Number($('new-deduct-value').value);
       if (!name) return toast('请输入扣除项名称');
-      if (type !== 'tax' && !(value >= 0)) return toast('请输入有效数值');
-      st().deductions.push({ id: 'd' + Date.now(), name, type, value: type === 'tax' ? 0 : value });
-      Store.save(); renderDeductList();
+      if (type !== 'koreanTax' && !(value >= 0)) return toast('请输入有效数值');
+      st().deductions.push({ id: 'd' + Date.now(), name, nameCn: '', type, value: type === 'koreanTax' ? 0 : value, enabled: true });
+      Store.save(); renderDeductList(); renderSalary();
       $('new-deduct-name').value = $('new-deduct-value').value = '';
       toast('已添加扣除项');
+    };
+
+    $('btn-add-allow').onclick = () => {
+      const name = $('new-allow-name').value.trim();
+      const type = $('new-allow-type').value;
+      const value = Number($('new-allow-value').value);
+      if (!name) return toast('请输入津贴项名称');
+      if (type === 'fixed' && !(value >= 0)) return toast('请输入有效金额');
+      st().allowances.push({ id: 'a' + Date.now(), name, nameCn: '', value: type === 'fixed' ? value : 0, type, enabled: true });
+      Store.save(); renderAllowList(); renderSalary();
+      $('new-allow-name').value = $('new-allow-value').value = '';
+      toast('已添加津贴项');
     };
 
     $('btn-edit-tax').onclick = () => {

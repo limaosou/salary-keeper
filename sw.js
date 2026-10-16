@@ -1,6 +1,6 @@
 /* Service Worker：网络优先 + 离线兜底
    目的是让「快捷指令自动打开页面」时即使网络不佳也能秒开，不是为了做离线应用 */
-const CACHE = 'salary-keeper-v1';
+const CACHE = 'salary-keeper-v2';
 const SHELL = [
   './',
   './index.html',

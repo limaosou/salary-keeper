@@ -12,15 +12,22 @@ const ok = (name, cond, extra = '') => {
 };
 
 // 在页面脚本执行前注入 GPS 模拟器（无头浏览器不投递 context 级模拟定位）
+// 坐标存localStorage，才能跨 reload 保留 —— 否则「打开即校准」拿到的是初始 0,0
 const GEO_MOCK = () => {
-  window.__geo = { lat: 0, lng: 0 };
+  if (!localStorage.getItem('__mockgeo')) {
+    localStorage.setItem('__mockgeo', JSON.stringify({ lat: 37.5, lng: 127.0 }));
+  }
   window.__fireGeo = (lat, lng) => {
-    window.__geo = { lat, lng };
+    localStorage.setItem('__mockgeo', JSON.stringify({ lat, lng }));
     if (window.__geoCb) window.__geoCb({ coords: { latitude: lat, longitude: lng, accuracy: 10 } });
   };
+  const read = () => JSON.parse(localStorage.getItem('__mockgeo'));
   navigator.geolocation.watchPosition = (success) => { window.__geoCb = success; return 1; };
   navigator.geolocation.clearWatch = () => {};
-  navigator.geolocation.getCurrentPosition = (s) => s({ coords: { latitude: window.__geo.lat, longitude: window.__geo.lng } });
+  navigator.geolocation.getCurrentPosition = (s) => {
+    const g = read();
+    s({ coords: { latitude: g.lat, longitude: g.lng, accuracy: 10 } });
+  };
 };
 
 (async () => {
@@ -41,7 +48,8 @@ const GEO_MOCK = () => {
   await page.fill('#set-fence-name', '测试公司');
   await page.fill('#set-fence-lat', '37.5');
   await page.fill('#set-fence-lng', '127.0');
-  await page.fill('#set-hourly', '30');
+  await page.fill('#set-hourly', '10470');
+  await page.fill('#set-monthly-hours', '176');
   await page.screenshot({ path: path.join(OUT, '4-设置.png') });
 
   // 刷新使围栏配置进入 GeoPunch（init 时已启动监听）
@@ -118,12 +126,21 @@ const GEO_MOCK = () => {
   const deduct = num(await page.textContent('#sal-deduct'));
   const net = num(await page.textContent('#sal-net'));
   console.log(`  月薪页: 应发 ${gross} / 扣除 ${deduct} / 实发 ${net}`);
-  ok('月应发 = 240+375+320+264 = 1199', Math.abs(gross - 1199) < 0.01, '实际 ' + gross);
-  ok('应发−扣除=实发', Math.abs(gross - deduct - net) < 0.01);
+  // 基本工资 + 周薪 + 实物补贴 + 职务开发费为固定部分（加班费随考勤变动）
+  const baseFixed = 1842720 + 335040 + 366450 + 192000;
+  ok('月应发 ≥ 固定项合计 2,736,210', gross >= baseFixed, `实际 ${gross}`);
+  ok('应发−扣除=实发', Math.abs(gross - deduct - net) < 1);
   const dedHtml = await page.innerHTML('#sal-deductions');
-  ok('扣除项含健康保险/养老/个税', dedHtml.includes('健康保险') && dedHtml.includes('养老') && dedHtml.includes('个人所得'));
+  ok('扣除项含健康/长期/雇佣保险+所得税',
+    dedHtml.includes('국민건강보험') && dedHtml.includes('장기보험')
+    && dedHtml.includes('고용보험') && dedHtml.includes('소득세'));
   const bdHtml = await page.innerHTML('#sal-breakdown');
-  ok('应发构成含正常/加班/夜班', bdHtml.includes('正常工时') && bdHtml.includes('加班费') && bdHtml.includes('夜班补助'));
+  ok('应发含 기본급/주수/실액수당/직무개발비',
+    bdHtml.includes('기본급') && bdHtml.includes('기업급여') && bdHtml.includes('실액수당') && bdHtml.includes('직무개발비'));
+  ok('显示社保基数 2,209,170', (await page.textContent('#sal-base')).includes('2,209,170'));
+  ok('考勤汇总含总工时/加班/夜班/出勤',
+    (await page.innerHTML('#sal-attendance')).includes('총근로시간')
+    && (await page.innerHTML('#sal-attendance')).includes('초과근로시간'));
   await page.screenshot({ path: path.join(OUT, '5-月薪.png') });
 
   // ---------- 核对老板实发 ----------
@@ -133,11 +150,11 @@ const GEO_MOCK = () => {
   let checkTxt = await page.textContent('#check-result');
   ok('实发一致时提示无误', checkTxt.includes('完全一致'), checkTxt.trim().slice(0, 24));
 
-  await page.fill('#actual-paid', String(net - 500));           // 老板少发 500
+  await page.fill('#actual-paid', String(net - 500000));        // 工资条少发 500,000원
   await page.click('#btn-check');
   await page.waitForTimeout(300);
   checkTxt = await page.textContent('#check-result');
-  ok('少发500时提示差额', checkTxt.includes('500.00') && checkTxt.includes('少发'));
+  ok('少发 500,000원 时提示差额', checkTxt.includes('500,000') && checkTxt.includes('少发'), checkTxt.trim().slice(0, 30));
   await page.screenshot({ path: path.join(OUT, '6-核对差异.png') });
 
   ok('全流程无 JS 报错', errors.length === 0, errors.join(';'));

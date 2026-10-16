@@ -5,3 +5,4 @@ node_modules/
 screenshots/live/
 salary-keeper-deploy.zip
 salary-keeper-deploy/
+tmp/

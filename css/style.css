@@ -249,7 +249,7 @@ input, select { font-family: inherit; outline: none; }
 }
 .copy-box .btn { flex: 0 0 auto; padding: 7px 12px; font-size: .76rem; border-radius: 9px; }
 
-/* ---------- 异常记录 ---------- */
+/* ---------- 异常记录 / 津贴列表 ---------- */
 .issue-list { margin-bottom: 12px; }
 .issue-item {
   display: flex; gap: 10px; align-items: flex-start;
@@ -258,3 +258,28 @@ input, select { font-family: inherit; outline: none; }
 .issue-item:last-child { border-bottom: none; }
 .issue-item b { color: var(--red); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .issue-item span { color: var(--text-2); }
+.issue-item em { font-style: normal; background: var(--primary-soft); color: var(--primary-deep); padding: 1px 5px; border-radius: 4px; margin-left: 4px; font-size: .68rem; }
+.issue-item .del { width: 22px; height: 22px; border-radius: 6px; color: var(--text-2); font-size: 1rem; flex-shrink: 0; }
+.issue-item .del:active { background: #FDECEC; color: var(--red); }
+
+/* ---------- 工资条样式 ---------- */
+.salary-head i { font-style: normal; font-size: .68rem; opacity: .85; line-height: 1.35; display: block; }
+.salary-head i em { font-style: normal; display: block; font-size: .78rem; opacity: 1; }
+.salary-head b { font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.slip-meta {
+  display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; padding-top: 12px;
+  border-top: 1px dashed var(--line); font-size: .8rem; color: var(--text-2);
+}
+.slip-meta span { white-space: nowrap; }
+.slip-meta b { color: var(--text); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.slip-base {
+  margin-top: 12px; padding: 9px 12px; border-radius: 10px;
+  background: var(--bg); font-size: .74rem; color: var(--text-2);
+}
+.slip-base b { color: var(--primary-deep); font-variant-numeric: tabular-nums; }
+
+/* 工资条明细里的公式说明 */
+.rowline em.f {
+  font-style: normal; display: block; color: var(--text-2);
+  font-size: .66rem; margin-top: 1px; line-height: 1.4;
+}
