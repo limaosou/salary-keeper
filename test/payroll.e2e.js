@@ -229,6 +229,13 @@ const SEED = () => {
   await page.waitForTimeout(400);
   const payTxt25 = (await page.textContent('#sal-payday')).replace(/\s+/g, ' ');
   ok('发薪日改为 25 号生效', /10\/2\d/.test(payTxt25), payTxt25.trim());
+  ok('提示里的「原 X 日」跟随实际发薪日', payTxt25.includes('/25'), payTxt25.trim());
+  // 还原发薪日：必须先切回设置页，否则 #set-pay-day 处于隐藏页不可见
+  await page.click('.tab[data-page="settings"]');
+  await page.waitForTimeout(300);
+  await page.fill('#set-pay-day', '17');
+  await page.dispatchEvent('#set-pay-day', 'change');
+  await page.waitForTimeout(250);
 
   await page.screenshot({ path: path.join(OUT, '14-月薪实算.png'), fullPage: true });
   ok('全流程无 JS 报错', errors.length === 0, errors.slice(0, 3).join('; '));

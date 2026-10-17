@@ -231,13 +231,14 @@ python -m http.server 8901
 # 回归测试（Node）
 node test/salary.test.js   # 计薪引擎单测：52 项（含 2026-09 工资条全量复现）
 node test/calendar.e2e.js  # 考勤月历：状态判定/法定假日/补签校验/月切换/边界，97 项
-node test/payroll.e2e.js   # 薪资规则：班次时间/日薪结构/夜班补助/假日1.5倍/两种口径/发薪日/退职金/档案编辑，44 项
+node test/payroll.e2e.js   # 薪资规则：班次时间/日薪结构/夜班补助/假日1.5倍/两种口径/发薪日/退职金/档案编辑，45 项
 node test/slip.e2e.js      # 工资条端到端：灌真实考勤 → 校验 UI 三个数字与 13 项明细，25 项
 node test/e2e.js           # 主流程 E2E：模拟 GPS 自动签到/签退，17 项
 node test/sync.e2e.js      # 「打开即校准」专项：自动签到/签退/防抖/未配置坐标，17 项
+node test/import.test.js   # 导入/导出：备份还原后数字一致，14 项
 ```
 
-六套测试共 **252 项断言**，需先启动本地服务：`python -m http.server 8901`。测试截图在 `screenshots/`。
+七套测试共 **267 项断言**，需先启动本地服务：`python -m http.server 8901`（E2E 脚本依赖它，不会自己拉起）。测试截图在 `screenshots/`。
 
 ## 打包成安卓 APP
 
@@ -307,7 +308,7 @@ js/salary.js        计薪引擎（两种口径 calcMonthSlip / calcMonthAttenda
                      + 出勤判定（judgeDay / monthGrid / monthStatusStats / holidayInfo）
 js/geo.js           地理围栏（打开即校准、持续定位、Haversine 距离、防抖状态机）
 js/app.js           页面渲染与交互（含月历渲染、补签面板、班次与日薪结构设置）
-test/               单测 + 五套 E2E
+test/               单测 + 六套 E2E
 ```
 
 ## 已知限制

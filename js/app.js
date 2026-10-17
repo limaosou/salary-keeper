@@ -564,7 +564,9 @@
     const pd = Salary.payDateFor(y, m, p.payDay || 17);
     $('sal-payday').innerHTML = `<span>급여일 发薪日</span>
       <b>${y}년 ${pd.label}</b>
-      <em>${pd.adjusted ? `원래 ${m}/17 이 주말 → 앞당김（原 17 日逢周末，提前发放）` : '정상 正常'}</em>`;
+      <em>${pd.adjusted
+        ? `원래 ${m}/${pd.origin} 이 주말 → 앞당김（原 ${pd.origin} 日逢周末，提前发放）`
+        : `정상 正常（매월 ${pd.origin}일）`}</em>`;
 
     // 工资条表头信息
     $('sal-meta').innerHTML = [
