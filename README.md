@@ -236,9 +236,14 @@ node test/slip.e2e.js      # 工资条端到端：灌真实考勤 → 校验 UI 
 node test/e2e.js           # 主流程 E2E：模拟 GPS 自动签到/签退，17 项
 node test/sync.e2e.js      # 「打开即校准」专项：自动签到/签退/防抖/未配置坐标，17 项
 node test/import.test.js   # 导入/导出：备份还原后数字一致，14 项
+node test/layout-check.js  # 布局回归：375/390/360 三种窄视口 × 四个页面 + 补签浮层，断言不可横向滚动、无越界元素，30 项
 ```
 
-七套测试共 **267 项断言**，需先启动本地服务：`python -m http.server 8901`（E2E 脚本依赖它，不会自己拉起）。测试截图在 `screenshots/`。
+八套测试共 **297 项断言**，需先启动本地服务：`python -m http.server 8901`（E2E 脚本依赖它，不会自己拉起）。测试截图在 `screenshots/`。
+
+### 布局回归测什么
+
+手机窄屏下最容易出的问题是「某个控件写死宽度把整页撑宽」，表现为页面能左右拖。`layout-check.js` 会灌一个月满数据 + 超长津贴/扣除/员工名，在 375 / 390 / 360 三种视口逐页断言 `scrollWidth ≤ 视口宽`。已知坑：**表单控件（input/select）默认 `min-width:auto`，flex 容器溢出时不肯收缩**，必须显式 `min-width:0` 才肯缩。
 
 ## 打包成安卓 APP
 
@@ -308,7 +313,7 @@ js/salary.js        计薪引擎（两种口径 calcMonthSlip / calcMonthAttenda
                      + 出勤判定（judgeDay / monthGrid / monthStatusStats / holidayInfo）
 js/geo.js           地理围栏（打开即校准、持续定位、Haversine 距离、防抖状态机）
 js/app.js           页面渲染与交互（含月历渲染、补签面板、班次与日薪结构设置）
-test/               单测 + 六套 E2E
+test/               单测 + 七套 E2E
 ```
 
 ## 已知限制
