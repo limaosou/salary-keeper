@@ -78,6 +78,9 @@ const SEED = () => {
     tue: Salary.shiftWindowFor('2026-10-06', 'day'),
     friNight: Salary.shiftWindowFor('2026-10-09', 'night'),
     wedNight: Salary.shiftWindowFor('2026-10-07', 'night'),
+    // 周五夜班的下班时刻要落到周六，不能还挂在周五
+    friNightIn: Salary.shiftBoundary('2026-10-09', 'night', 'in'),
+    friNightOut: Salary.shiftBoundary('2026-10-09', 'night', 'out'),
     weekly: Store.settings.shift.weeklyWorkDays,
     rest: Store.settings.restMinutes
   }));
@@ -86,6 +89,12 @@ const SEED = () => {
     `${win.wedNight.start}–${win.wedNight.end}`);
   ok('白班周一晚 2 小时 → 10:20 上班', win.mon.start === '10:20', win.mon.start);
   ok('夜班周五早 2 小时 → 06:20 下班', win.friNight.end === '06:20', win.friNight.end);
+  ok('周五夜班：周五 20:20 上班', win.friNightIn.getDay() === 5 && win.friNightIn.getHours() === 20
+    && win.friNightIn.getMinutes() === 20,
+    win.friNightIn.toLocaleString('ko-KR', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }));
+  ok('周五夜班：周六 06:20 下班（跨午夜归次日）', win.friNightOut.getDay() === 6
+    && win.friNightOut.getHours() === 6 && win.friNightOut.getMinutes() === 20,
+    win.friNightOut.toLocaleString('ko-KR', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false }));
   ok('每周上班 5 天', win.weekly === 5, String(win.weekly));
   ok('每日休息扣除 30 分钟', win.rest === 30, `${win.rest} 分`);
 

@@ -115,6 +115,19 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
     r.segments = [{ in: new Date('2026-10-20T10:22').toISOString(), out: new Date('2026-10-20T20:20').toISOString() }];
     return Salary.judgeDay('2026-10-20', { now: new Date('2026-10-25') }).code;
   }) === 'late');
+  // 周五夜班：20:20 上班 → 周六 06:20 下班（跨午夜归次日）
+  ok('周五夜班周六 06:20 退 → normal', await page.evaluate(() => {
+    const r = Store.day('2026-10-23');
+    r.shiftType = 'night';
+    r.segments = [{ in: new Date('2026-10-23T20:20').toISOString(), out: new Date('2026-10-24T06:20').toISOString() }];
+    return Salary.judgeDay('2026-10-23', { now: new Date('2026-10-24T23:59:59') }).code;
+  }) === 'normal');
+  ok('周五夜班周六 06:00 退 → early（按 06:20 算早退）', await page.evaluate(() => {
+    const r = Store.day('2026-10-23');
+    r.shiftType = 'night';
+    r.segments = [{ in: new Date('2026-10-23T20:20').toISOString(), out: new Date('2026-10-24T06:00').toISOString() }];
+    return Salary.judgeDay('2026-10-23', { now: new Date('2026-10-24T23:59:59') }).code;
+  }) === 'early');
 
   console.log('\n──── 二、韩国法定假日标识 ────');
   const holidayDays = await page.$$eval('.cal-cell.s-holiday', els => els.map(e => e.dataset.date));
