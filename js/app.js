@@ -955,7 +955,7 @@
       const url = syncUrl();
       try {
         await navigator.clipboard.writeText(url);
-        toast('✅ 地址已复制，粘贴到快捷指令的「打开 URL」里');
+        toast('✅ 地址已复制（仅「打开 URL」方式需要；锁屏全自动请用「打开 App」）');
       } catch (err) {
         toast('复制失败，请手动长按选中上方地址');
       }

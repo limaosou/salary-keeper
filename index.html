@@ -422,7 +422,9 @@
       <div class="card-title">全自动打卡（不用开着页面）</div>
       <div class="hint" style="margin:0 0 10px">
         iPhone 锁屏后浏览器会停止定位，所以靠<strong>系统自动化</strong>在「到达/离开公司」时自动打开本页，
-        本页取一次定位就把打卡状态对齐。全程不需要你动手。
+        本页取一次定位就把打卡状态对齐。全程不需要你动手。<br>
+        <span style="color:var(--red)"><b>关键：锁屏时 iOS 不允许自动打开浏览器（Safari）</b>，
+        必须先按第 1 步把本页「添加到主屏幕」，再用「打开 App」的方式唤起，否则会提示打不开。</span>
       </div>
       <label class="switch-row" style="margin-top:0">
         <span>打开页面时自动校准</span>
@@ -436,22 +438,31 @@
       <div class="step-guide">
         <div class="step-title">iPhone 设置步骤（一次性，约 3 分钟）</div>
         <ol>
-          <li>把本页<b>添加到主屏幕</b>（Safari 分享 → 添加到主屏幕）</li>
+          <li>把本页<b>添加到主屏幕</b>（Safari 分享 → 添加到主屏幕），图标名字保持「工资通」<br>
+            <span class="sub">这是整件事的前提：锁屏时 iOS 只允许自动打开「App」，不允许打开浏览器；添加到主屏幕后，本页就成为一个独立 App</span></li>
           <li>允许<b>定位权限</b>为「始终允许」<br>
             <span class="sub">设置 → 隐私与安全性 → 定位服务 → Safari 网站 → 始终允许</span></li>
           <li>打开系统「快捷指令」App → 新建快捷指令，命名「工资通打卡」</li>
-          <li>添加操作 → 搜索并添加 <b>「打开 URL」</b></li>
-          <li>把下面这个地址填进 URL：</li>
+          <li>添加操作 → 选 <b>「打开 App」</b> → 选取 App 时找到并选择 <b>工资通</b>（主屏幕那个图标）<br>
+            <span class="sub">不要用「打开 URL」——那个动作在锁屏状态会弹「无法打开」</span></li>
+          <li>回到「快捷指令」App → 顶部 <b>自动化</b> → 新建 → 选 <b>「到达」</b> → 地点选公司 → 运行选「工资通打卡」</li>
+          <li>再建一个自动化：<b>「离开」</b> 同一地点 → 同样运行「工资通打卡」</li>
+          <li>两个自动化都关掉 <b>「运行前询问」</b>，保持「立即运行」</li>
         </ol>
+        <div class="hint warn" style="margin:12px 0 0">
+          <b>遇到「锁屏状态打不开浏览器」的提示？</b><br>
+          说明第 4 步用了「打开 URL」。删掉它，改成 <b>「打开 App」→ 工资通</b> 即可——
+          浏览器锁屏下叫不醒，但 App 可以。<br>
+          若仍打不开，把触发器换成下面任一个，锁屏下同样稳定：<br>
+          · <b>连接充电器时</b>：到公司插上充电线就自动打开<br>
+          · <b>车载蓝牙</b>：上车连上车机就自动打开<br>
+          · <b>Alarm 闹钟响铃时</b>：把起床闹钟作为触发器，出门前页已就位
+        </div>
+        <div class="hint" style="margin:8px 0 0">备用地址（仅当你坚持用「打开 URL」方式时才需要粘贴）：</div>
         <div class="copy-box">
           <code id="sync-url">…</code>
           <button class="btn btn-ghost" id="btn-copy-url">复制</button>
         </div>
-        <ol start="6">
-          <li>回到「快捷指令」App → 顶部 <b>自动化</b> → 新建 → 选 <b>「到达」</b> → 地点选公司</li>
-          <li>再建一个自动化：<b>「离开」</b> 同一地点 → 都选刚才那个快捷指令</li>
-          <li>两个自动化都设为 <b>「立即运行」</b>（不要等询问）</li>
-        </ol>
       </div>
       <button class="btn btn-primary" id="btn-test-sync">测试一次自动打卡</button>
       <div class="hint" id="test-hint"></div>

@@ -52,6 +52,15 @@ const GEO_MOCK = () => {
   await page.fill('#set-monthly-hours', '176');
   await page.screenshot({ path: path.join(OUT, '4-设置.png') });
 
+  // ---------- 全自动打卡引导：锁屏只能「打开 App」，不能「打开 URL」 ----------
+  const guide = await page.evaluate(() => {
+    const g = document.querySelector('.step-guide');
+    return { text: g ? g.textContent.replace(/\s+/g, ' ') : '', openApp: !!document.querySelector('.step-guide') };
+  });
+  ok('引导要求用「打开 App」而非「打开 URL」', guide.text.includes('打开 App') && !guide.text.includes('添加操作 → 搜索并添加 「打开 URL」'), '');
+  ok('引导写明锁屏打不开浏览器的排错', guide.text.includes('锁屏状态打不开浏览器'), '');
+  ok('引导给出充电器/蓝牙等备选触发器', guide.text.includes('连接充电器时') && guide.text.includes('蓝牙'), '');
+
   // 刷新使围栏配置进入 GeoPunch（init 时已启动监听）
   await page.reload({ waitUntil: 'networkidle' });
 
