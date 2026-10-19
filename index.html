@@ -487,6 +487,41 @@
     </div>
 
     <div class="card">
+      <div class="card-title">云端打卡（锁屏也不用打开页面）</div>
+      <div class="hint" style="margin:0 0 10px">
+        iOS 锁屏会拦截「打开 App / 打开 URL」，但<strong>不拦网络请求</strong>。
+        所以更彻底的做法是：快捷指令在到达/离开公司时只发一个 HTTP 请求到你的服务器记账，
+        <strong>完全不打开页面</strong>。月底你打开工资通，点一下同步就把打卡流水拉回来。
+      </div>
+      <label class="switch-row" style="margin-top:0">
+        <span>启用云端打卡</span>
+        <input type="checkbox" id="cloud-enabled">
+        <em class="switch"></em>
+      </label>
+      <div class="field"><label>服务器地址</label><input type="text" id="cloud-url" placeholder="http://1.2.3.4:8080"></div>
+      <div class="field"><label>访问令牌</label><input type="text" id="cloud-token" placeholder="启动服务端时打印的 token"></div>
+      <div class="field"><label>公司时区</label><input type="number" id="cloud-tz" step="0.5" min="-12" max="14"></div>
+      <label class="switch-row">
+        <span>打开页面时自动同步</span>
+        <input type="checkbox" id="cloud-sync-on-open">
+        <em class="switch"></em>
+      </label>
+      <button class="btn btn-ghost" id="btn-cloud-test">测试连接</button>
+      <button class="btn btn-primary" id="btn-cloud-sync">立即同步打卡</button>
+      <div class="hint" id="cloud-hint"></div>
+      <div class="step-guide" id="cloud-urls" hidden>
+        <div class="step-title">把这两个地址填进 iPhone 快捷指令</div>
+        <div class="hint" style="margin:0 0 8px">
+          快捷指令 → 自动化 → <b>到达</b>/<b>离开</b> 公司 → 动作选
+          <b>「获取 URL 内容」</b>（不是「打开 URL」，也不是「打开 App」）→ 各填下面一条。
+        </div>
+        <div class="copy-box"><code id="cloud-url-in">…</code><button class="btn btn-ghost" id="btn-copy-in">复制</button></div>
+        <div class="copy-box"><code id="cloud-url-out">…</code><button class="btn btn-ghost" id="btn-copy-out">复制</button></div>
+        <div class="hint" style="margin:6px 0 0">别忘了关掉自动化的「运行前询问」，否则每次都会弹窗等你确认。</div>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-title">运行异常记录</div>
       <div id="issue-list" class="issue-list"></div>
       <button class="btn btn-ghost" id="btn-clear-issues">清空记录</button>
@@ -517,6 +552,7 @@
 <script src="js/storage.js"></script>
 <script src="js/salary.js"></script>
 <script src="js/geo.js"></script>
+<script src="js/cloud.js"></script>
 <script src="js/app.js"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol === 'https:') {

@@ -118,6 +118,17 @@ const Store = (() => {
       lastSync: null,
       issues: [],
       reentryGuard: 30,
+
+      // ===== 自建服务器同步（快捷指令只发网络请求，不打开页面）=====
+      cloud: {
+        enabled: false,
+        url: '',        // 例：http://1.2.3.4:8080
+        token: '',
+        tzOffset: 9,    // 公司所在时区偏移（小时），韩国 9
+        syncOnOpen: false, // 打开页面时自动拉一次
+        lastSyncAt: null,
+        lastSyncCount: 0
+      },
     },
     attendance: {},   // { 'YYYY-MM-DD': { shiftType, segments:[{in,out}], restMinutes, perf, isRestDay } }
     actualPaid: {},   // { 'YYYY-MM': amount } 工资条实发（核对用）
@@ -257,7 +268,7 @@ const Store = (() => {
       s.profile = Object.assign(s.profile, parsed.profile || {});
       s.settings = Object.assign(s.settings, parsed.settings || {});
       // 嵌套对象也要合并，否则老数据升级后会丢掉新增的子字段
-      ['fence', 'shift', 'dailyPay'].forEach(k => {
+      ['fence', 'shift', 'dailyPay', 'cloud'].forEach(k => {
         s.settings[k] = Object.assign(DEFAULTS.settings[k], (parsed.settings || {})[k] || {});
       });
       // 数组类配置：以存量数据为准（用户可能已增删），缺省才回落到默认
