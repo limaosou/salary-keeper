@@ -66,18 +66,47 @@ eq('月计薪工时 = 176h（= 기본급÷시급）', Salary.monthlyStandardHour
 eq('주수 = 4일×8h×10470 = 335,040', Salary.weeklyBase(), 335040);
 eq('기본급 = 176 × 10,470 = 1,842,720', Math.round(Salary.monthlyStandardHours() * 10470), 1842720);
 
-console.log('\n══════ 三、单日工时 ══════');
-const mk = (dIn, dOut, rest = 60) => ({
+console.log('\n══════ 三、单日工时（按班次应到/应退计时）══════');
+// 新口径：基准是「班次窗口 − 休息」，不是实际打卡时刻。
+// 手动签到/补签视同按时出勤；自动打卡迟到/早退才扣；超出窗口的算加班。
+Store.settings.lateGrace = 0;      // 测试里关掉宽限，便于精确断言
+Store.settings.earlyGrace = 0;
+const mk = (dIn, dOut, rest = 60, extra = {}) => ({
   shiftType: 'day', restMinutes: rest, perf: 1, isRestDay: false,
-  segments: [{ in: dIn, out: dOut }]
+  segments: [{ in: dIn, out: dOut }], ...extra
 });
-let r = Salary.calcDay(mk('2026-09-01T09:00', '2026-09-01T18:00'), '2026-09-01');
-eq('09:00–18:00 扣1h午休 = 8h', r.workHours, 8);
-eq('恰好 8h → 无加班', r.otHours, 0);
+let r = Salary.calcDay(mk('2026-09-01T08:20', '2026-09-01T20:20'), '2026-09-01');
+eq('按时出勤 08:20–20:20 扣1h = 11h（标准8h+加班3h）', r.workHours, 11);
+eq('加班 = 11 − 8 = 3h', r.otHours, 3);
 
-r = Salary.calcDay(mk('2026-09-02T09:00', '2026-09-02T21:00'), '2026-09-02');
-eq('09:00–21:00 扣1h午休 = 11h', r.workHours, 11);
-eq('超 8h → 加班 3h', r.otHours, 3);
+// 核心规则：12 点才想起来，手动补签 → 仍按整班 11h 算
+r = Salary.calcDay(mk('2026-09-02T12:00', '2026-09-02T20:20', 60, {
+  segments: [{ in: '2026-09-02T12:00', out: '2026-09-02T20:20', src: 'manual' }]
+}), '2026-09-02');
+eq('手动补签 12:00–20:20 仍按整班 11h', r.workHours, 11);
+eq('不判迟到 → 无扣减', r.otHours, 3);
+
+// 自动打卡：真实迟到 40 分钟 → 扣 40 分钟
+r = Salary.calcDay(mk('2026-09-03T09:00', '2026-09-03T20:20'), '2026-09-03');
+eq('自动打卡迟到 40 分 → 11h − 40m = 10.33h', r.workHours, 620 / 60);
+
+// 自动打卡：早退 2 小时 → 扣 2 小时
+r = Salary.calcDay(mk('2026-09-04T08:20', '2026-09-04T18:20'), '2026-09-04');
+eq('自动打卡早退 2h → 11h − 2h = 9h', r.workHours, 9);
+
+// 特殊情况登记：上午外出 2 小时
+r = Salary.calcDay(mk('2026-09-06T08:20', '2026-09-06T20:20', 60, {
+  adjust: { lateMin: 120, earlyMin: 0, note: '上午外出办事' }
+}), '2026-09-06');
+eq('登记迟到 120 分 → 11h − 2h = 9h', r.workHours, 9);
+r = Salary.calcDay(mk('2026-09-07T08:20', '2026-09-07T20:20', 60, {
+  adjust: { lateMin: 0, earlyMin: 30, note: '提前下班' }
+}), '2026-09-07');
+eq('登记早退 30 分 → 11h − 0.5h = 10.5h', r.workHours, 10.5);
+
+// 超出班次窗口的实际加班照算
+r = Salary.calcDay(mk('2026-09-08T08:20', '2026-09-08T23:00'), '2026-09-08');
+eq('加班到 23:00 → 11h 班内 + 2.67h 加班 = 13.67h', r.workHours, (11 + 170 / 60));
 
 r = Salary.calcDay({
   shiftType: 'night', restMinutes: 0, perf: 1, isRestDay: false,
@@ -86,6 +115,20 @@ r = Salary.calcDay({
 eq('跨午夜夜班 22:00–06:00 = 8h', r.workHours, 8);
 eq('夜班重叠 8h（22:00–06:00 全覆盖）', r.nightHours, 8);
 eq('夜班超 8h 部分不计加班（跨日归次日）', r.otHours, 0);
+
+// 夜班手动补签：视同整班 20:20–08:20（用周三，避开周五 06:20 早下班的 10h 短班）
+r = Salary.calcDay({
+  shiftType: 'night', restMinutes: 0, perf: 1, isRestDay: false,
+  segments: [{ in: '2026-09-16T23:00', out: '2026-09-17T07:00', src: 'manual' }]
+}, '2026-09-16');
+eq('夜班补签 23:00–07:00 按整班 12h', r.workHours, 12);
+
+// 周五夜班是 10h 短班（06:20 早下班）
+r = Salary.calcDay({
+  shiftType: 'night', restMinutes: 0, perf: 1, isRestDay: false,
+  segments: [{ in: '2026-09-18T20:20', out: '2026-09-19T06:20', src: 'manual' }]
+}, '2026-09-18');
+eq('周五夜班按 10h 短班计', r.workHours, 10);
 
 r = Salary.calcDay({ shiftType: 'day', restMinutes: 0, perf: 1, isRestDay: true, segments: [{ in: '2026-09-05T09:00', out: '2026-09-05T18:00' }] }, '2026-09-05');
 eq('休息日不计薪', r.workHours, 0);
@@ -174,12 +217,13 @@ console.log(`   要复现 현장근로수당 617,840，需加班工时 ${targetO
 eq('617,840 ÷ (10470×1.5) = 39.3403h', targetOT.toFixed(4), '39.3403');
 
 // 构造精确场景：按「加班小时数」累加到下班时间，天然跨天也正确
+// 起点用当班应到时间 08:20，配合上面关掉的宽限，可精确得到 8h + 加班
 const HOUR = 3600000;
 function makeAtt(spec) {
   const out = {};
   for (const [d, otH] of spec) {
     const ds = `2026-09-${String(d).padStart(2, '0')}`;
-    const inMs = new Date(`${ds}T09:00`).getTime();
+    const inMs = new Date(`${ds}T08:20`).getTime();
     const workMs = (8 + otH) * HOUR;            // 计薪工时 = 8h + 加班
     const endMs = inMs + workMs + 60 * 60000;   // 在岗 = 计薪工时 + 午休
     out[ds] = {

@@ -50,6 +50,11 @@
         <button class="btn btn-primary" id="btn-manual-in">手动签到</button>
         <button class="btn btn-ghost" id="btn-manual-out">手动签退</button>
       </div>
+      <div class="hint" style="margin:8px 0 0">
+        手动签到 / 签退<b>按当班正常时间计薪</b>（白班 08:20–20:20、夜班 20:20–次日 08:20），
+        忘了打卡、晚点补都不会少算。地理围栏自动打卡按真实时间记，迟到早退会自动扣减；
+        真有特殊情况，到【考勤】点对应日期登记扣减。
+      </div>
       <label class="switch-row">
         <span>自动打卡（地理围栏）</span>
         <input type="checkbox" id="auto-punch-switch">
@@ -136,6 +141,10 @@
 
         <div class="mk-block">
           <div class="mk-label">手工补签</div>
+          <div class="hint" style="margin:0 0 8px">
+            手动签到 / 补签<b>按当班正常出勤退勤计薪</b>（按设定的上下班时间计时），
+            晚点打卡、忘了打卡都不扣时间。
+          </div>
           <div class="seg-ctrl">
             <button class="seg-btn active" data-type="in">补签到</button>
             <button class="seg-btn" data-type="out">补签退</button>
@@ -150,6 +159,29 @@
           </div>
           <button id="mk-submit" class="btn btn-primary">提交补签</button>
           <div class="hint" id="mk-msg"></div>
+        </div>
+
+        <div class="mk-block">
+          <div class="mk-label">特殊情况扣减（迟到 / 早退才填）</div>
+          <div class="hint" style="margin:0 0 8px">
+            确实迟到或早退了才在这里登记，工时按「当班时间 − 登记分钟」扣减；
+            不填就是完整一班。地理围栏自动打卡已按真实时间自动判定，无需登记。
+          </div>
+          <div class="mk-row">
+            <label for="mk-late">迟到扣减（分钟）</label>
+            <input type="number" id="mk-late" min="0" max="600" step="5" placeholder="0">
+          </div>
+          <div class="mk-row">
+            <label for="mk-early">早退扣减（分钟）</label>
+            <input type="number" id="mk-early" min="0" max="600" step="5" placeholder="0">
+          </div>
+          <div class="mk-row">
+            <label for="mk-adjust-note">情况说明</label>
+            <input type="text" id="mk-adjust-note" maxlength="100" placeholder="如：上午外出办事 2 小时">
+          </div>
+          <button id="mk-adjust-save" class="btn btn-ghost">保存扣减</button>
+          <button id="mk-adjust-clear" class="btn btn-ghost">清除</button>
+          <div class="hint" id="mk-adjust-msg"></div>
         </div>
 
         <div class="mk-block">

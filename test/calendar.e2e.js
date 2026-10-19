@@ -181,7 +181,7 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
   ok('补签退提交成功', msg1.includes('成功'), msg1);
   ok('补签后状态自动刷新为 normal', await code(13) === 'normal', `实际 ${await code(13)}`);
   ok('明细已含补签时间', (await page.textContent('#mk-detail')).includes('20:20'));
-  ok('明细标注来源为手工补签', (await page.textContent('#mk-detail')).includes('手工补签'));
+  ok('明细标注来源为手动/补签', (await page.textContent('#mk-detail')).includes('手动/补签'));
   ok('补签记录已留痕', (await page.textContent('#mk-logs')).includes('忘打卡补签'));
   ok('日历格子出现补签圆点', (await page.$$(cellSel(13) + ' .mkdot')).length === 1);
   ok('统计胶囊出现补签计数', (await page.textContent('#att-stat')).includes('补签'));

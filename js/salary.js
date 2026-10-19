@@ -62,6 +62,14 @@ const Salary = (() => {
   /**
    * 计算单日出勤数据（工时/夜班时/加班时）
    * 不直接算钱——月薪制下钱按月总额算，日结只统计工时
+   *
+   * 计薪口径（2026-10-20 起）：**按班次应到/应退计时，不按实际打卡时刻**
+   *   · 基准 = shiftWindowFor 的窗口 − 每日休息扣除
+   *   · 自动（地理围栏）打卡按真实时间：迟到/早退超出宽限的部分扣减
+   *   · 手动签到 / 补签（seg.src === 'manual'）**视同按时出勤**——
+   *     忘了打卡、12 点才想起来，都按当班正常时间算，不扣
+   *   · 实际工时超出班次窗口的部分仍按加班计（extraOtHours）
+   *   · rec.adjust = { lateMin, earlyMin, note } 为特殊情况手工登记扣减
    */
   function calcDay(rec, dateStr, opts = {}) {
     const st = Store.settings;
@@ -73,27 +81,73 @@ const Salary = (() => {
     if (!rec || rec.isRestDay || !rec.segments.length) return result;
 
     const nowForOpen = opts.nowForOpen || new Date();
-    let grossMs = 0, nightMs = 0;
+    const shiftType = rec.shiftType || 'day';
+    const restMs = (Number(rec.restMinutes) || 0) * 60000;
+    const lateGrace = (Number(st.lateGrace) || 0) * 60000;
+    const earlyGrace = (Number(st.earlyGrace) || 0) * 60000;
 
-    for (const sg of rec.segments) {
+    // ---- ① 实际在岗：各段累加（未签退段封顶到 nowForOpen），再扣每日休息 ----
+    const segs = rec.segments.filter(sg => sg.in);
+    let rawMs = 0;
+    let firstIn = null, lastOut = null, lastOutSeg = null, openSeg = null;
+    for (const sg of segs) {
       const s = new Date(sg.in).getTime();
       const e = sg.out ? new Date(sg.out).getTime() : nowForOpen.getTime();
       if (e <= s) continue;
-      grossMs += e - s;
-      nightMs += nightOverlapHours(s, e, st.nightStart, st.nightEnd) * MS_H;
+      rawMs += e - s;
+      if (firstIn === null || s < firstIn) firstIn = s;
+      if (sg.out) {
+        if (lastOut === null || e > lastOut) { lastOut = e; lastOutSeg = sg; }
+      } else if (!openSeg) {
+        openSeg = sg;
+      }
+    }
+    if (firstIn === null) return result;
+    const actualMs = Math.max(0, rawMs - restMs);
+
+    // ---- ② 班次窗口（应到 / 应退）----
+    const schedStart = shiftBoundary(dateStr, shiftType, 'in', st).getTime();
+    const schedEnd = shiftBoundary(dateStr, shiftType, 'out', st).getTime();
+    const schedMs = Math.max(0, schedEnd - schedStart - restMs);
+    if (schedMs <= 0) {                     // 班次配置异常时退回实际工时
+      const wh = Math.max(0, actualMs - restMs) / MS_H;
+      return { ...result, workHours: wh, otHours: Math.max(0, wh - (Number(st.dailyHours) || 8)) };
     }
 
-    grossMs = Math.max(0, grossMs - (rec.restMinutes || 0) * 60000);
-    const workHours = grossMs / MS_H;
+    // ---- ③ 有效在岗区间 ----
+    // 手动签到/补签 → 起点视同应到；自动打卡 → 真实时间（宽限内不扣）
+    const manualIn = segs[0].src === 'manual';
+    const manualOut = !!lastOutSeg && lastOutSeg.src === 'manual';
+    let inEff = manualIn
+      ? schedStart
+      : Math.max(Math.min(firstIn, schedStart), firstIn - lateGrace);
+    let outEff = manualOut
+      ? schedEnd
+      : (lastOut === null
+          ? schedEnd
+          : Math.min(Math.max(lastOut, schedEnd), lastOut + earlyGrace));
 
-    // 日加班判定：超过「일근로시간 + 午休」算加班
-    // 工资条现场근로수당 = 617,840 ÷ (시급×1.5) = 39.34h，
-    // 与「平日总工时 − 计薪工时」口径吻合，故加班 = 工时 − 日计薪工时
-    const dailyStd = Number(st.dailyHours) || 8;
-    const otHours = Math.max(0, workHours - dailyStd);
+    // ---- ④ 特殊情况手工登记（迟到/早退 + 说明）----
+    const adj = rec.adjust;
+    if (adj) {
+      inEff += (Number(adj.lateMin) || 0) * 60000;
+      outEff -= (Number(adj.earlyMin) || 0) * 60000;
+    }
+
+    // ---- ⑤ 未签退：最多算到「当前时刻」----
+    if (openSeg && !lastOut) outEff = Math.min(outEff, nowForOpen.getTime());
+
+    // ---- ⑥ 计薪工时 = 班次窗口内（封顶）＋ 窗口外实际加班 ----
+    const paidMs = Math.max(0, Math.min(outEff - inEff - restMs, schedMs));
+    const extraMs = Math.max(0, actualMs - schedMs);
+    const workHours = (paidMs + extraMs) / MS_H;
+
+    // 夜班时数按有效在岗区间算（手动补签视同整班在岗）
+    const nightEnd = openSeg ? Math.max(nowForOpen.getTime(), inEff) : Math.max(lastOut || inEff, inEff);
+    const nightMs = nightOverlapHours(inEff, nightEnd, st.nightStart, st.nightEnd) * MS_H;
 
     result.workHours = workHours;
-    result.otHours = otHours;
+    result.otHours = Math.max(0, workHours - (Number(st.dailyHours) || 8));
     result.nightHours = nightMs / MS_H;
     result.perf = st.perfMode === 'monthly'
       ? (Number(st.perfMonthly) || 1)
@@ -311,13 +365,33 @@ const Salary = (() => {
     const lateGrace = (Number(st.lateGrace) || 0) * 60000;
     const earlyGrace = (Number(st.earlyGrace) || 0) * 60000;
 
-    const isLate = segStart > startAt + lateGrace;
-    // 今天还在进行中：只要已签到且未签退，不判早退/缺卡
-    const isEarly = segEnd !== null && segEnd < endAt - earlyGrace;
+    // 手动签到 / 补签：视同按时出勤，不因「忘了打卡、事后才补」判迟到早退
+    const manualIn = segs[0].src === 'manual';
+    let lastOutSeg = null;
+    segs.forEach(sg => { if (sg.out && new Date(sg.out).getTime() === segEnd) lastOutSeg = sg; });
+    const manualOut = !!lastOutSeg && lastOutSeg.src === 'manual';
+    const adj = rec.adjust || null;
 
-    if (isLate && isEarly) return { ...line, code: 'lateearly', ...STATUS.lateearly };
-    if (isLate) return { ...line, code: 'late', ...STATUS.late };
-    if (isEarly) return { ...line, code: 'early', ...STATUS.early };
+    let isLate = !manualIn && segStart > startAt + lateGrace;
+    // 今天还在进行中：只要已签到且未签退，不判早退/缺卡
+    let isEarly = !manualOut && segEnd !== null && segEnd < endAt - earlyGrace;
+
+    // 特殊情况登记：手工登记的迟到/早退分钟数，直接体现在状态与工时上
+    if (adj && ((Number(adj.lateMin) || 0) > 0 || (Number(adj.earlyMin) || 0) > 0)) {
+      if ((Number(adj.lateMin) || 0) > 0) isLate = true;
+      if ((Number(adj.earlyMin) || 0) > 0) isEarly = true;
+    }
+
+    const adjNote = adj && ((Number(adj.lateMin) || 0) > 0 || (Number(adj.earlyMin) || 0) > 0)
+      ? `（登记扣减：迟到 ${Number(adj.lateMin) || 0} 分 / 早退 ${Number(adj.earlyMin) || 0} 分${adj.note ? ' · ' + adj.note : ''}）`
+      : '';
+
+    if (isLate && isEarly) return { ...line, code: 'lateearly', ...STATUS.lateearly, extra: adjNote };
+    if (isLate) return { ...line, code: 'late', ...STATUS.late, extra: adjNote };
+    if (isEarly) return { ...line, code: 'early', ...STATUS.early, extra: adjNote };
+    if (manualIn || manualOut) {
+      return { ...line, code: 'normal', ...STATUS.normal, extra: '补签/手动 · 按当班时间计' };
+    }
     return { ...line, code: 'normal', ...STATUS.normal };
   }
 

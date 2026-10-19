@@ -150,6 +150,7 @@ const Store = (() => {
     const rec = state.attendance[dateStr];
     // 兜底：兼容没有这些字段的历史数据
     if (rec.leave === undefined) rec.leave = null;
+    if (rec.adjust === undefined) rec.adjust = null;
     if (!Array.isArray(rec.makeups)) rec.makeups = [];
     if (!Array.isArray(rec.segments)) rec.segments = [];
     return rec;
@@ -207,7 +208,7 @@ const Store = (() => {
 
     if (type === 'in') {
       if (segs.length > 0) return { ok: false, msg: '当日已有签到记录，无需补签到' };
-      rec.segments.push({ in: new Date(timeMs).toISOString(), out: null, makeup: true });
+      rec.segments.push({ in: new Date(timeMs).toISOString(), out: null, makeup: true, src: 'manual' });
     } else {
       const open = rec.segments.find(sg => sg.out === null) || null;
       if (!open) return { ok: false, msg: '当日没有未签退的签到，无法补签退' };
@@ -215,6 +216,7 @@ const Store = (() => {
       if (timeMs <= inMs) return { ok: false, msg: '签退时间须晚于签到时间' };
       open.out = new Date(timeMs).toISOString();
       open.makeup = true;
+      open.src = 'manual';
     }
 
     rec.makeups.push({
@@ -245,6 +247,28 @@ const Store = (() => {
     rec.makeups.splice(idx, 1);
     save();
     return { ok: true, msg: '已撤销该补签' };
+  };
+
+  /**
+   * 登记当日「特殊情况」扣减：迟到 / 早退分钟数 + 说明
+   * 手动签到/补签默认视同按时出勤；真有偏差（如上午外出 2 小时）时在这里登记，
+   * 工时按「班次时间 − 登记分钟」扣减，月历同步标记迟到/早退。
+   */
+  const setAdjust = (dateStr, { lateMin = 0, earlyMin = 0, note = '' } = {}) => {
+    const rec = day(dateStr);
+    const late = Math.max(0, Math.min(600, Math.round(Number(lateMin) || 0)));
+    const early = Math.max(0, Math.min(600, Math.round(Number(earlyMin) || 0)));
+    const txt = String(note || '').slice(0, 100);
+    if (!late && !early && !txt) { rec.adjust = null; save(); return { ok: true, msg: '已清除扣减登记' }; }
+    rec.adjust = { lateMin: late, earlyMin: early, note: txt, at: new Date().toISOString() };
+    save();
+    return { ok: true, msg: (late || early) ? `已登记扣减：迟到 ${late} 分 / 早退 ${early} 分` : '已保存说明' };
+  };
+
+  /** 读取当日扣减登记 */
+  const getAdjust = dateStr => {
+    const rec = state.attendance[dateStr];
+    return (rec && rec.adjust) || null;
   };
 
   function load() {
@@ -331,6 +355,8 @@ s.settings[k] = Object.assign(DEFAULTS.settings[k], (parsed.settings || {})[k] |
     clearLeave,
     addMakeup,
     removeMakeup,
+    setAdjust,
+    getAdjust,
 
     /** 正在打卡中的 segment（out 为 null） */
     activeSegment(rec) {

@@ -274,6 +274,7 @@ input, select { font-family: inherit; outline: none; }
 .mk-seg:last-child { border-bottom: none; }
 .mk-seg b { font-variant-numeric: tabular-nums; }
 .mk-seg .opic { color: var(--primary-deep); }
+.mk-seg b.mk-note { font-weight: 500; font-size: .74rem; color: var(--text-2); text-align: right; }
 
 .hint.ok { color: var(--green); }
 .hint.err { color: #C0392B; }

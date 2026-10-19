@@ -20,15 +20,17 @@
   const M = n => curSym() + money(n);   // 带货币符号
 
   /* ---------- 打卡动作 ---------- */
+  // src: 'auto'=地理围栏自动打卡（按真实时间计薪）
+  //      'manual'=手动签到/签退/补签（视同按时出勤，按班次时间计薪）
   function punchIn(auto = false, reason = '') {
     const ds = todayStr();
     const rec = Store.day(ds);
     if (Store.activeSegment(rec)) { toast('当前已在打卡中'); return false; }
-    rec.segments.push({ in: new Date().toISOString(), out: null, auto, reason });
+    rec.segments.push({ in: new Date().toISOString(), out: null, auto, src: auto ? 'auto' : 'manual', reason });
     rec.isRestDay = false;
     Store.save();
     refreshToday();
-    toast(auto ? '📍 已进入公司区域，自动签到' : '✅ 已签到');
+    toast(auto ? '📍 已进入公司区域，自动签到' : '✅ 已签到（按当班正常时间计薪）');
     return true;
   }
 
@@ -39,6 +41,7 @@
     if (!seg) { toast('当前未在打卡中'); return false; }
     seg.out = new Date().toISOString();
     seg.outReason = reason;
+    if (!seg.src) seg.src = auto ? 'auto' : 'manual';
     Store.save();
     refreshToday();
     const r = Salary.calcDay(rec, ds, { nowForOpen: new Date() });
@@ -47,7 +50,7 @@
     const dayPay = r.workHours * s.hourlyRate + r.otHours * s.hourlyRate * s.overtimeMultiplier;
     toast(auto
       ? `\u{1F4CD} 已离开公司区域，自动签退 · 今日 ${r.workHours.toFixed(1)}h · ${kr(dayPay)}원`
-      : `✅ 已签退 · 今日 ${r.workHours.toFixed(1)}h · ${kr(dayPay)}원`);
+      : `✅ 已签退 · 今日 ${r.workHours.toFixed(1)}h · ${kr(dayPay)}원（按当班时间计）`);
     return true;
   }
 
@@ -378,12 +381,14 @@
 
     // 打卡明细
     const segs = rec && rec.segments ? rec.segments : [];
+    const srcTag = sg => sg.src === 'manual' ? '手动/补签' : (sg.src === 'auto' ? '自动打卡' : (sg.makeup ? '手工补签' : '自动打卡'));
     $('mk-detail').innerHTML = segs.length
       ? segs.map((sg, i) => `<div class="mk-seg">
-          <span>第 ${i + 1} 段 <i class="opic">${sg.makeup ? '手工补签' : '自动打卡'}</i></span>
+          <span>第 ${i + 1} 段 <i class="opic">${srcTag(sg)}</i></span>
           <b>${fmtTime(sg.in)} – ${sg.out ? fmtTime(sg.out) : '<span class="opic">未签退</span>'}</b>
         </div>`).join('') +
-        `<div class="mk-seg"><span>工时 / 加班</span><b>${st.workHours.toFixed(1)}h / ${st.otHours.toFixed(1)}h</b></div>`
+        `<div class="mk-seg"><span>工时 / 加班</span><b>${st.workHours.toFixed(1)}h / ${st.otHours.toFixed(1)}h</b></div>` +
+        (st.extra ? `<div class="mk-seg"><span>说明</span><b class="mk-note">${st.extra}</b></div>` : '')
       : `<div class="mk-empty">当日无打卡记录${st.leave ? `（已登记请假：${st.leave.type}）` : ''}</div>`;
 
     // 补签留痕
@@ -403,6 +408,16 @@
         if (r.ok) { renderMakeupPanel(); refreshAll(); }
       };
     });
+
+    // 已登记的特殊情况扣减回填到表单
+    const adj = Store.getAdjust(mkDate);
+    $('mk-late').value = adj && adj.lateMin ? adj.lateMin : '';
+    $('mk-early').value = adj && adj.earlyMin ? adj.earlyMin : '';
+    $('mk-adjust-note').value = (adj && adj.note) || '';
+    $('mk-adjust-msg').textContent = adj && (adj.lateMin || adj.earlyMin)
+      ? `当前已登记：迟到 ${adj.lateMin || 0} 分 / 早退 ${adj.earlyMin || 0} 分${adj.note ? ' · ' + adj.note : ''}`
+      : '';
+    $('mk-adjust-msg').className = 'hint';
 
     // 请假按钮文案随状态切换
     $('mk-leave').textContent = st.leave ? '取消请假' : '登记请假';
@@ -453,6 +468,25 @@
       Store.save();
       toast(rec.isRestDay ? '已标记为休息日' : '已取消休息日');
       renderMakeupPanel(); refreshAll();
+    };
+
+    const saveAdjust = () => {
+      if (!mkDate) return;
+      const r = Store.setAdjust(mkDate, {
+        lateMin: $('mk-late').value,
+        earlyMin: $('mk-early').value,
+        note: $('mk-adjust-note').value
+      });
+      const msg = $('mk-adjust-msg');
+      msg.textContent = r.msg;
+      msg.className = 'hint ' + (r.ok ? 'ok' : 'err');
+      renderMakeupPanel(); refreshAll();
+    };
+    $('mk-adjust-save').onclick = saveAdjust;
+    $('mk-adjust-clear').onclick = () => {
+      if (!mkDate) return;
+      $('mk-late').value = ''; $('mk-early').value = ''; $('mk-adjust-note').value = '';
+      saveAdjust();
     };
   }
 

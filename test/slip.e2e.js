@@ -22,6 +22,7 @@ const GEO_MOCK = () => {
 };
 
 // 灌入工资条对应考勤：基础 15 天无加班 + 加班 39.3403h（凑 현장근로수당 617,840）
+// 起点用当班应到时间 08:20，并关掉迟到/早退宽限，使「计薪工时 = 8h + 加班」精确成立
 // 注意：首次访问时 storage.js 的 load() 不写盘，所以这里不能依赖已存在的 key，
 // 直接写入 { attendance }，其余字段由 storage.js 的 DEFAULTS 合并补齐。
 const SEED = () => {
@@ -31,7 +32,7 @@ const SEED = () => {
   const base = [1, 2, 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 21];
   const mk = (d, otH) => {
     const ds = `2026-09-${String(d).padStart(2, '0')}`;
-    const inM = new Date(`${ds}T09:00`).getTime();
+    const inM = new Date(`${ds}T08:20`).getTime();
     const endM = inM + (8 + otH) * HOUR + 60 * 60000;
     att[ds] = {
       shiftType: 'day', restMinutes: 60, perf: 1, isRestDay: false,
@@ -45,6 +46,7 @@ const SEED = () => {
   Object.keys(cur.attendance || {}).forEach(k => { if (k.startsWith('2026-09')) delete cur.attendance[k]; });
   cur.attendance = Object.assign(cur.attendance || {}, att);
   cur.actualPaid = cur.actualPaid || {};
+  cur.settings = Object.assign(cur.settings || {}, { lateGrace: 0, earlyGrace: 0 });
   localStorage.setItem(KEY, JSON.stringify(cur));
   return Object.keys(cur.attendance).filter(k => k.startsWith('2026-09')).length;
 };
