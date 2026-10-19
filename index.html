@@ -490,25 +490,33 @@
       <div class="card-title">云端打卡（锁屏也不用打开页面）</div>
       <div class="hint" style="margin:0 0 10px">
         iOS 锁屏会拦截「打开 App / 打开 URL」，但<strong>不拦网络请求</strong>。
-        所以更彻底的做法是：快捷指令在到达/离开公司时只发一个 HTTP 请求到你的服务器记账，
-        <strong>完全不打开页面</strong>。月底你打开工资通，点一下同步就把打卡流水拉回来。
+        所以更彻底的做法是：快捷指令在到达/离开公司时只发一个 HTTP 请求到服务器记账，
+        <strong>完全不打开页面</strong>。月底你打开工资通，点一下同步就把打卡流水拉回来。<br>
+        一个服务器可以很多人共用：每个人自己点「申领令牌」拿一个，<strong>互相看不到对方的打卡</strong>。
+        服务器上只有时间戳，不含任何工资数据。
       </div>
       <label class="switch-row" style="margin-top:0">
         <span>启用云端打卡</span>
         <input type="checkbox" id="cloud-enabled">
         <em class="switch"></em>
       </label>
-      <div class="field"><label>服务器地址</label><input type="text" id="cloud-url" placeholder="http://1.2.3.4:8080"></div>
-      <div class="field"><label>访问令牌</label><input type="text" id="cloud-token" placeholder="启动服务端时打印的 token"></div>
+      <div class="field"><label>服务器地址</label><input type="text" id="cloud-url" placeholder="https://xxx.workers.dev"></div>
+      <div class="field"><label>访问令牌</label><input type="text" id="cloud-token" placeholder="点下面「申领令牌」自动填，或手工填"></div>
+      <div class="field"><label>邀请码</label><input type="text" id="cloud-invite" placeholder="只在领令牌时用一次"></div>
       <div class="field"><label>公司时区</label><input type="number" id="cloud-tz" step="0.5" min="-12" max="14"></div>
       <label class="switch-row">
         <span>打开页面时自动同步</span>
         <input type="checkbox" id="cloud-sync-on-open">
         <em class="switch"></em>
       </label>
+      <button class="btn btn-ghost" id="btn-cloud-register">🔑 申领令牌</button>
       <button class="btn btn-ghost" id="btn-cloud-test">测试连接</button>
       <button class="btn btn-primary" id="btn-cloud-sync">立即同步打卡</button>
       <div class="hint" id="cloud-hint"></div>
+      <div class="hint warn" id="cloud-token-warn" hidden>
+        <b>令牌只保存在这台手机里</b>，换手机或清了 Safari 数据就拿不回来。
+        去「备份与导出」把它一起导出，或者现在就手抄到备忘录。
+      </div>
       <div class="step-guide" id="cloud-urls" hidden>
         <div class="step-title">把这两个地址填进 iPhone 快捷指令</div>
         <div class="hint" style="margin:0 0 8px">

@@ -127,6 +127,33 @@
     return { ok: true, changed, days: Object.keys(days).length, month: month || 'all' };
   }
 
+  /**
+   * 多人模式自助领令牌：POST /api/register?invite=xxx
+   * 领到后直接写进设置并开启同步，不用再手抄一遍。
+   */
+  async function register(invite) {
+    const base = baseUrl();
+    if (!base) return { ok: false, error: '先填服务器地址' };
+
+    const inv = String(invite || '').trim();
+    const url = `${base}/api/register` + (inv ? `?invite=${encodeURIComponent(inv)}` : '');
+    try {
+      const res = await fetch(url, { method: 'POST', cache: 'no-store', mode: 'cors' });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) return { ok: false, error: (json && json.error) || `服务器返回 ${res.status}` };
+      if (!json || json.ok === false) return { ok: false, error: (json && json.error) || '服务器拒绝' };
+      if (!json.token) return { ok: false, error: '服务器没返回令牌' };
+
+      const c = cfg();
+      c.token = json.token;
+      c.enabled = true;
+      S().save();
+      return { ok: true, token: json.token };
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  }
+
   /** 给快捷指令用的两个地址（t=in / t=out） */
   function punchUrls() {
     if (!isOn()) return { in: '', out: '' };
@@ -134,5 +161,5 @@
     return { in: `${baseUrl()}/api/punch${q}in`, out: `${baseUrl()}/api/punch${q}out` };
   }
 
-  global.CloudSync = { isOn, ping, sync, punchUrls, toSegments, toDate, cfg };
+  global.CloudSync = { isOn, ping, sync, punchUrls, register, toSegments, toDate, cfg };
 })(window);

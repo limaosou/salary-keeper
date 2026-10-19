@@ -692,8 +692,11 @@
     $('cloud-enabled').checked = !!c.enabled;
     $('cloud-url').value = c.url || '';
     $('cloud-token').value = c.token || '';
+    $('cloud-invite').value = c.invite || '';
     $('cloud-tz').value = c.tzOffset === undefined ? 9 : c.tzOffset;
     $('cloud-sync-on-open').checked = !!c.syncOnOpen;
+    // 有令牌才提醒备份 —— 令牌丢了服务端那边的数据就取不回来了
+    $('cloud-token-warn').hidden = !c.token;
 
     const urls = CloudSync.punchUrls();
     $('cloud-url-in').textContent = urls.in || '（填好服务器地址和令牌后显示）';
@@ -725,7 +728,18 @@
     };
     bind('cloud-url', 'url');
     bind('cloud-token', 'token');
+    bind('cloud-invite', 'invite');
     bind('cloud-tz', 'tzOffset', true);
+
+    // 多人模式的服务器：点一下领个专属令牌，自动填进去并开启同步
+    $('btn-cloud-register').onclick = async () => {
+      const hint = $('cloud-hint');
+      hint.textContent = '正在申领令牌…';
+      const r = await CloudSync.register($('cloud-invite').value);
+      if (!r.ok) { hint.textContent = `❌ ${r.error}`; return; }
+      renderCloud();
+      hint.textContent = `✅ 已领到令牌 ${r.token.slice(0, 8)}… 记得导出备份留底`;
+    };
 
     $('btn-cloud-test').onclick = async () => {
       const hint = $('cloud-hint');

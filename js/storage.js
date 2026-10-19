@@ -124,6 +124,7 @@ const Store = (() => {
         enabled: false,
         url: '',        // 例：http://1.2.3.4:8080
         token: '',
+        invite: '',     // 多人模式下领令牌用的邀请码，领完就不需要留着
         tzOffset: 9,    // 公司所在时区偏移（小时），韩国 9
         syncOnOpen: false, // 打开页面时自动拉一次
         lastSyncAt: null,

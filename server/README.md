@@ -97,6 +97,9 @@ cd /www/wwwroot/salary-keeper
    DATA_DIR=/www/wwwroot/salary-keeper-data
    ```
 
+   > 这一组是**单人模式**（只有你自己能用）。要让同事一起用，
+   > 把 `TOKEN` 换成 `INVITE=邀请码` 并加上 `MODE=multi`，见下面「进阶：共享给同事」。
+
 6. 保存后点 **启动**，日志里会打印 token 和三行地址
 
 > Node 版本要选 **18 或以上**。宝塔的 Node 项目插件能直接选版本，不用自己编译。
@@ -290,6 +293,45 @@ pm2 restart salary-keeper      # 或在 Node 项目面板点「重启」
 - 别把 8080 加进宝塔防火墙的放行列表——反代走 80/443，不需要额外端口
 - 别改 nginx 的 `default.conf` / `nginx.conf` 主配置，只动自己站点的 `.conf`
 - 改任何配置前先备份：`cp x.conf x.conf.bak`
+
+---
+
+## 进阶：把这个后端共享给同事（多人模式）
+
+一台服务器可以很多人共用，**每个人一个令牌，数据互相读不到**。不用改代码，只换启动参数：
+
+```bash
+# 关键：不要设 TOKEN，改设 INVITE；MODE 显式写 multi 最保险
+MODE=multi INVITE=你编的邀请码 PORT=8080 \
+DATA_DIR=/www/wwwroot/salary-keeper-data \
+node server/server.js
+```
+
+启动日志会变成：
+
+```
+运行模式   多人（各自令牌，互不可见）
+领令牌     POST http://127.0.0.1:8080/api/register?invite=<邀请码>
+```
+
+**同事那边**：设置 → 云端打卡 → 填服务器地址 + 邀请码 → 点「🔑 申领令牌」，
+令牌自动填好。之后跟着做快捷指令就行，和你自己配的流程一模一样。
+
+数据落在 `DATA_DIR/users/<令牌哈希>.json`，一个人一个文件：
+
+```bash
+ls /www/wwwroot/salary-keeper-data/users/     # 有几个人就有几个文件
+```
+
+> ⚠️ **令牌丢了就取不回来**（服务器上只存哈希，反推不出原值）。
+> 让每个人在 App 里至少导出一次备份。
+>
+> ⚠️ 邀请码只影响「新人能不能领令牌」，**改邀请码不会让已领的人失效**。
+> 真要停掉某个人，删掉他那个 `users/<hash>.json`（他就看不到自己的历史了，
+> 但还能继续写入新记录——对付恶意用户得在 nginx 层封 IP）。
+
+**不想自己维护服务器**？用 `workers/README.md` 那套 Cloudflare 版：
+免费 `xxx.workers.dev` 域名、免运维、免信用卡，接口和这里完全一致。
 
 ---
 

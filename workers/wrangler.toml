@@ -1,0 +1,30 @@
+# 工资通 · Cloudflare Workers 部署配置
+#
+# Cloudflare Workers 免费额度（2026-10 核对，随时可能调整，以官网为准）：
+#   请求  10 万次/天   ·  KV 读 10 万次/天、写 1000 次/天、存储 1 GB
+#   免信用卡、无冷启动、自动分配 https://<名字>.workers.dev 域名和 HTTPS 证书
+
+name = "salary-keeper"
+main = "worker.js"
+compatibility_date = "2026-10-19"
+
+# 公司所在时区偏移。韩国是 9，中国是 8。改完要重新部署才生效
+[vars]
+TZ_OFFSET = 9
+
+# 打卡流水存这里。id 在面板创建 KV 命名空间后能拿到
+#   面板 → 存储和数据库 → Workers KV → 创建命名空间
+[[kv_namespaces]]
+binding = "PUNCHES"
+id = "在这里粘贴你的 KV 命名空间 ID"
+
+# ── 下面两个建议用 Secret 存，不要写在这个文件里（会进代码仓库）──
+#
+# 多人模式（共享给同事）：留空 SINGLE_TOKEN，只设 INVITE
+#   npx wrangler secret put INVITE
+#
+# 单人模式（只给自己用）：设置 SINGLE_TOKEN 即可，不再发令牌
+#   npx wrangler secret put SINGLE_TOKEN
+
+[observability]
+enabled = true

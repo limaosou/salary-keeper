@@ -56,21 +56,36 @@ iOS 的 Safari / PWA 一旦锁屏或切到后台，系统会**冻结网页的定
                         月底打开工资通 → 设置 → 云端打卡 → 立即同步 → 还原成当月考勤
 ```
 
-服务端在 `server/` 目录，零依赖单文件，同时托管本页面：
+服务端有两个实现，**接口完全一致**，App 那边操作也一模一样：
+
+| | `server/`（自建 VPS） | `workers/`（Cloudflare） |
+|---|---|---|
+| 适合 | 只有自己用 | **共享给同事** |
+| 域名 | 要自己的域名 | 免费 `xxx.workers.dev` + HTTPS |
+| 费用 | 服务器已有开销 | 0 元、免信用卡、免运维 |
+| 部署说明 | [server/README.md](server/README.md)（含宝塔 `/www/wwwroot/` 多站点环境） | [workers/README.md](workers/README.md) |
+
+自建那份零依赖单文件，同时托管本页面：
 
 ```bash
 cd /opt/salary-keeper
-TOKEN=你的口令 PORT=8080 node server/server.js
+TOKEN=你的口令 PORT=8080 node server/server.js     # 单人模式：只有这一个令牌
 ```
 
-然后在 App【设置 → 云端打卡】填服务器地址 + 令牌，点「测试连接」，把生成的两条地址
-（`t=in` / `t=out`）复制进快捷指令的「获取 URL 内容」即可。部署见 [server/README.md](server/README.md)（含宝塔面板 `/www/wwwroot/` 多站点环境的目录与反向代理安排）。
+**多人模式**（一个后端给多个人用）：不设 `TOKEN`，改设 `INVITE` 邀请码，
+每个人在 App 里点「🔑 申领令牌」领一串随机令牌。
+数据按令牌哈希分桶存放，**互相读不到对方的打卡**。
+
+```bash
+MODE=multi INVITE=你的邀请码 PORT=8080 node server/server.js
+```
 
 要点：
 
 - **页面和接口必须同域**。用 `http://IP:8080/` 打开工资通并添加到主屏幕；若页面是 HTTPS 而接口是 HTTP，会被浏览器按混合内容拦掉
 - 服务器内置 **3 分钟防抖**（同类型重复触发忽略）与**连续同类型自动补齐**
-- 数据就是一个 JSON 文件 `server/data/punches.json`，备份它即可
+- 单人模式数据就是一个 JSON 文件 `server/data/punches.json`，备份它即可；多人模式是 `server/data/users/<令牌哈希>.json`
+- **服务器上只有打卡时间戳，没有任何工资数据** —— 工资全在手机本地算，这也是能共享给别人用的前提
 
 ### 防误打卡
 
@@ -270,9 +285,11 @@ node test/sync.e2e.js      # 「打开即校准」专项：自动签到/签退/�
 node test/import.test.js   # 导入/导出：备份还原后数字一致，14 项
 node test/layout-check.js  # 布局回归：375/390/360 三种窄视口 × 四个页面 + 补签浮层，断言不可横向滚动、无越界元素，30 项
 node test/cloud.e2e.js     # 云端打卡：自起服务端 → 快捷指令打点 → 页面同步还原，含鉴权/防抖/时区/窄屏溢出，26 项
+node test/multiuser.e2e.js # 多人共享：两个浏览器上下文各自领令牌 → 打卡 → 验证互相读不到 → 同步回页面，18 项
+node test/worker.test.js   # Workers 版后端：用内存 KV 模拟 Cloudflare 运行时，鉴权/隔离/时区/单人模式，27 项
 ```
 
-九套测试共 **332 项断言**，需先启动本地服务：`python -m http.server 8901`（除 `cloud.e2e.js` 会自己拉起服务端外，其余 E2E 依赖它，不会自拉起）。测试截图在 `screenshots/`。
+十一套测试共 **377 项断言**，需先启动本地服务：`python -m http.server 8901`（除 `cloud.e2e.js`、`multiuser.e2e.js` 会自己拉起服务端外，其余 E2E 依赖它，不会自拉起）。`worker.test.js` 不依赖任何服务。测试截图在 `screenshots/`。
 
 ### 布局回归测什么
 
@@ -345,8 +362,11 @@ js/salary.js        计薪引擎（两种口径 calcMonthSlip / calcMonthAttenda
                      Haversine 距离、个税累进、韩国地方税取整）
                      + 出勤判定（judgeDay / monthGrid / monthStatusStats / holidayInfo）
 js/geo.js           地理围栏（打开即校准、持续定位、Haversine 距离、防抖状态机）
+js/cloud.js         云端同步（拉打卡流水 → 还原成 segments；/api/register 领令牌）
 js/app.js           页面渲染与交互（含月历渲染、补签面板、班次与日薪结构设置）
-test/               单测 + 七套 E2E
+server/server.js    自建服务端（Node 零依赖；托管页面 + 打卡接口；单人/多人双模式）
+workers/worker.js   同款接口的 Cloudflare Workers 版（免费 workers.dev 域名，适合共享给同事）
+test/               单测 + 九套 E2E
 ```
 
 ## 已知限制
