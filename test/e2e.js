@@ -60,6 +60,11 @@ const GEO_MOCK = () => {
   ok('引导要求用「打开 App」而非「打开 URL」', guide.text.includes('打开 App') && !guide.text.includes('添加操作 → 搜索并添加 「打开 URL」'), '');
   ok('引导写明锁屏打不开浏览器的排错', guide.text.includes('锁屏状态打不开浏览器'), '');
   ok('引导给出充电器/蓝牙等备选触发器', guide.text.includes('连接充电器时') && guide.text.includes('蓝牙'), '');
+  ok('引导写明「打开 App 找不到工资通」的排查', guide.text.includes('找不到「工资通」') && guide.text.includes('添加到主屏幕'), '');
+
+  // 未添加到主屏幕时应亮出自检警示（这是「找不到工资通」的根因）
+  ok('浏览器直开时提示「不是主屏幕 App」', await page.evaluate(() =>
+    !document.querySelector('#standalone-hint').hidden), '');
 
   // 刷新使围栏配置进入 GeoPunch（init 时已启动监听）
   await page.reload({ waitUntil: 'networkidle' });

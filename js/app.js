@@ -126,6 +126,18 @@
     if (el) el.textContent = syncUrl();
   }
 
+  // 自检：是否正以「主屏幕 App（PWA）」模式运行。
+  // 只有在 Safari 里直接打开时才为 false —— 这正是「打开 App 列表里找不到工资通」的根因。
+  function isStandaloneApp() {
+    if (window.navigator.standalone === true) return true;              // iOS Safari Web Clip
+    try { return window.matchMedia('(display-mode: standalone)').matches; } catch (e) { return false; }
+  }
+
+  function renderStandaloneHint() {
+    const el = $('standalone-hint');
+    if (el) el.hidden = isStandaloneApp();
+  }
+
   function renderIssues() {
     const box = $('issue-list');
     if (!box) return;
@@ -755,6 +767,7 @@
     $('set-reentry-guard').value = s.reentryGuard;
     $('sync-on-open-switch').checked = s.autoSyncOnOpen;
     renderSyncUrl();
+    renderStandaloneHint();
     renderIssues();
 
     renderAllowList();

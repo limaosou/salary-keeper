@@ -426,6 +426,12 @@
         <span style="color:var(--red)"><b>关键：锁屏时 iOS 不允许自动打开浏览器（Safari）</b>，
         必须先按第 1 步把本页「添加到主屏幕」，再用「打开 App」的方式唤起，否则会提示打不开。</span>
       </div>
+      <div class="hint warn" id="standalone-hint" hidden>
+        <b>你现在是在浏览器里打开的，不是主屏幕 App。</b><br>
+        「打开 App」列表里看不到工资通，就是因为它还没被添加成主屏幕图标。<br>
+        请用 Safari 打开本页 → 底部分享按钮 → <b>添加到主屏幕</b>，名字保持「工资通」，
+        然后再去快捷指令里选「打开 App」。
+      </div>
       <label class="switch-row" style="margin-top:0">
         <span>打开页面时自动校准</span>
         <input type="checkbox" id="sync-on-open-switch">
@@ -457,6 +463,18 @@
           · <b>连接充电器时</b>：到公司插上充电线就自动打开<br>
           · <b>车载蓝牙</b>：上车连上车机就自动打开<br>
           · <b>Alarm 闹钟响铃时</b>：把起床闹钟作为触发器，出门前页已就位
+        </div>
+        <div class="hint warn" style="margin:8px 0 0">
+          <b>快捷指令的「打开 App」里找不到「工资通」？</b>按概率从高到低查：<br>
+          · <b>名字对不上</b>：列表显示的是<b>主屏幕上图标下方那个名字</b>，不是网页标题。
+          你添加时要是改过名（或当时默认全名「工资通 · 考勤计薪核对」），就按那个名字找，
+          或删掉图标重新添加、名字只填「工资通」<br>
+          · <b>根本没添加到主屏幕</b>：只是收藏了书签 —— 书签不会出现在 App 列表。
+          必须 Safari 分享 → <b>添加到主屏幕</b>（见第 1 步）<br>
+          · <b>用错浏览器添加</b>：只有 Safari 添加的才被 iOS 当 App；用 Chrome / Edge 添加的无效<br>
+          · <b>列表要往下翻</b>：点「打开 App」的 App 字段后，Web App 不在「建议」里，在完整列表中后段，
+          可点顶部搜索框直接输入「工资通」<br>
+          · <b>索引没更新</b>：重启一次手机，或删掉主屏幕图标重新添加
         </div>
         <div class="hint" style="margin:8px 0 0">备用地址（仅当你坚持用「打开 URL」方式时才需要粘贴）：</div>
         <div class="copy-box">
