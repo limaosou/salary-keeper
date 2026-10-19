@@ -1,173 +1,323 @@
-# 工资通 · 自建服务器版
+# 工资通 · 宝塔服务器部署
 
-一套东西解决两件事：**托管工资通页面** + **接收手机打卡请求**。
+针对**宝塔面板（BT Panel）+ `/www/wwwroot/` 多站点**的环境写成。同一个服务器上已有其他网站和域名时，
+按本文的目录、端口、反代三处安排就能共存，不影响已有站点。
 
-关键在于绕开 iOS 的锁屏限制：锁屏会拦截「打开 App / 打开 URL」这类需要界面的动作，
-但**不拦网络请求**。所以快捷指令在到达/离开公司时只发一个 HTTP 请求，压根不打开任何页面。
+一句话架构：
+
+```
+手机（锁屏状态）
+   └─ iPhone 快捷指令「获取 URL 内容」→ https://你的域名/api/punch?token=xxx&t=in
+                                            │
+                          nginx（宝塔现有站点）80/443
+                                            │ 反代
+                                            ▼
+                            node 工资通服务端 127.0.0.1:8080  ← 只监听本机，公网打不到
+                                            │
+                                            ▼
+                    /www/wwwroot/salary-keeper-data/punches.json
+```
+
+**关键点**：node 只监听 `127.0.0.1`，公网只能经 nginx 进来。这样既不用开放新端口，
+也不用担心别人绕过 nginx 直接扫端口；`punches.json` 放在 `wwwroot` **之外**，nginx 根本看不到它。
 
 ---
 
-## 一、部署（3 步）
+## 第 1 步：先看服务器现状（别跳过）
 
-### 1. 把整个项目拷到服务器
+面板里确认三件事，避免后面返工：
 
-```bash
-# 在服务器上，比如放到 /opt/salary-keeper
-scp -r ./小程序 user@你的服务器:/opt/salary-keeper
-```
-
-目录里要有 `index.html`、`js/`、`css/`，以及 `server/server.js`。
-
-### 2. 启动
-
-服务器上需要 **Node 18+**（`node -v` 确认）。
-
-```bash
-cd /opt/salary-keeper
-TOKEN=自己设一个长口令 PORT=8080 node server/server.js
-```
-
-启动后终端会打印三行地址，**把 token 抄下来**：
-
-```
-站点地址   http://<你的服务器IP>:8080/
-打卡接口   http://<你的服务器IP>:8080/api/punch?token=xxxx&t=in
-同步接口   http://<你的服务器IP>:8080/api/punches?token=xxxx&month=2026-10
-```
-
-不传 `TOKEN` 也会自动生成一个随机口令，存在 `server/data/config.json` 里。
-
-### 3. 常驻运行（关掉终端也不停）
-
-```bash
-# 用 pm2（推荐）
-npm i -g pm2
-cd /opt/salary-keeper
-TOKEN=你的口令 PORT=8080 pm2 start server/server.js --name salary
-pm2 save && pm2 startup
-```
-
-或者用 systemd：`/etc/systemd/system/salary.service`
-
-```ini
-[Unit]
-Description=Salary Keeper
-After=network.target
-
-[Service]
-WorkingDirectory=/opt/salary-keeper
-Environment=PORT=8080
-Environment=TOKEN=你的口令
-Environment=TZ_OFFSET=9
-ExecStart=/usr/bin/node server/server.js
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-systemctl daemon-reload && systemctl enable --now salary
-```
-
----
-
-## 二、配置项
-
-| 环境变量 | 默认 | 说明 |
+| 查什么 | 在哪看 | 记下来 |
 |---|---|---|
-| `PORT` | 8080 | 监听端口 |
-| `TOKEN` | 自动生成 | 访问口令，**必须保密**，泄露了别人就能替你打卡 |
-| `TZ_OFFSET` | 9 | 公司所在时区偏移，韩国填 9（北京时间也是 8） |
-| `PUBLIC_DIR` | 上一级目录 | 工资通静态文件所在目录 |
-| `DATA_DIR` | `server/data` | 打卡数据存放目录 |
+| 已占用的端口 | 终端 `ss -tlnp \| grep LISTEN` | 8080 是否被占；被占就换（如 8091） |
+| 有没有可用子域名 | 面板 → 网站 → 现有站点的域名 | 有的话直接用它的子域，如 `gz.example.com` |
+| 面板与系统 | 终端 `cat /etc/os-release` | 后续命令按你的系统调整 |
 
-数据就是一个 JSON 文件 `server/data/punches.json`，直接备份这个文件即可。
+> ⚠️ **端口冲突是最常见的翻车点**。宝塔自身默认占用 8888（面板）、80、443、3306、6379 等。
+> 用 `ss -tlnp` 看一眼 8080 是否空闲，被占就换端口，别硬起。
 
 ---
 
-## 三、手机端配置
+## 第 2 步：放代码（目录安排）
 
-### 1. 用服务器地址打开工资通
+`/www/wwwroot/` 下的每个子目录通常对应一个站点。我们的代码**只占一个独立目录**，
+数据另放一处，避免和已有站点的静态文件混在一起。
 
-在 Safari 打开 `http://<你的服务器IP>:8080/`，然后**添加到主屏幕**。
+```bash
+# 1) 建站点目录并放代码（假设你已有域名，指向这个目录）
+#    面板 → 网站 → 添加站点，目录填 /www/wwwroot/salary-keeper
+cd /www/wwwroot/salary-keeper
 
-> ⚠️ 不要再用 GitHub Pages 那个地址去连 HTTP 服务器：HTTPS 页面请求 HTTP 接口会被浏览器
-> 按「混合内容」拦掉。**页面和接口必须在同一个地址下**（都由这个服务端托管最省事）。
->
-> 如果你的服务器配了域名和 HTTPS 证书，那两边都安全，用哪个都行。
+# 2) 上传文件：只要这些，不要把整个 git 历史和其他站点文件拖进来
+#    index.html  js/  css/  icons/  sw.js  manifest.json  server/
+#    最省事：在你自己的电脑上推 GitHub，然后服务器上
+#      git clone https://github.com/limaosou/salary-keeper.git /www/wwwroot/salary-keeper
+```
 
-### 2. 在工资通里填配置
+**目录结构应该是这样：**
 
-`设置 → 云端打卡`：
+```
+/www/wwwroot/
+├── (你原来的站点目录…)          ← 不要动
+├── salary-keeper/               ← 工资通站点根（nginx 指向这里）
+│   ├── index.html
+│   ├── js/  css/  icons/
+│   ├── sw.js  manifest.json
+│   └── server/server.js
+└── (其他站点…)
 
-- 启用云端打卡：开
-- 服务器地址：`http://<你的服务器IP>:8080`（末尾不要带斜杠）
-- 访问令牌：启动时打印的那个 token
-- 公司时区：9
+/www/wwwroot/salary-keeper-data/   ← 单独放这里，见第 3 步
+└── punches.json  config.json
+```
 
-点「**测试连接**」，出现 `✅ 连接成功 · 服务器当前 …` 就通了。
+> **为什么要把数据放外面**：`/www/wwwroot/salary-keeper/` 是站点根目录，
+> nginx 会把里面任何文件都当静态文件发出去。虽然 `server.js` 内部已经拦截了
+> `server/` 目录的访问，但宝塔还会给站点配「防跨站攻击」和默认的目录规则，
+> 多一层目录隔离最保险。
 
-### 3. 配快捷指令（关键：用「获取 URL 内容」）
+---
 
-打开「快捷指令」App → 底部 **自动化** → 新建：
+## 第 3 步：常驻运行（宝塔两种方式，选一种）
+
+### 方式 A：宝塔「Node 项目」插件（推荐，图形化）
+
+装了 Node 版本管理器的话，用这个最省心：
+
+1. 面板左侧 **Node 项目**（或「网站 → Node 项目」）→ 添加项目
+2. 项目目录：`/www/wwwroot/salary-keeper/server`
+3. 启动选项：`server.js`
+4. 项目端口：`8080`
+5. 环境变量（点「添加」，一行一个）：
+
+   ```
+   PORT=8080
+   HOST=127.0.0.1
+   TZ_OFFSET=9
+   TOKEN=你自己设的一串长口令
+   DATA_DIR=/www/wwwroot/salary-keeper-data
+   ```
+
+6. 保存后点 **启动**，日志里会打印 token 和三行地址
+
+> Node 版本要选 **18 或以上**。宝塔的 Node 项目插件能直接选版本，不用自己编译。
+
+### 方式 B：PM2（如果服务器上有 PM2，或你习惯命令行）
+
+```bash
+# 宝塔的 node 常常不在 /usr/bin/node，先找出来
+which node || ls -d /www/server/nodejs/*/bin/node
+
+# 用绝对路径启动（宝塔环境不要用 `node` 裸命令）
+cd /www/wwwroot/salary-keeper
+HOST=127.0.0.1 PORT=8080 TZ_OFFSET=9 \
+DATA_DIR=/www/wwwroot/salary-keeper-data \
+TOKEN=你自己设的长口令 \
+pm2 start server/server.js --name salary-keeper --cwd /www/wwwroot/salary-keeper
+
+pm2 save && pm2 startup   # 保存并开机自启
+pm2 logs salary-keeper   # 看日志
+```
+
+启动成功后日志会打印（把 `你的域名` 换成实际值）：
+
+```
+  站点地址   http://127.0.0.1:8080/
+  打卡接口   http://127.0.0.1:8080/api/punch?token=xxxx&t=in
+  数据文件   /www/wwwroot/salary-keeper-data/punches.json
+```
+
+**token 自己设**：在终端 `openssl rand -hex 16` 生成一串，记下来，手机配置要用。
+
+---
+
+## 第 4 步：给现有域名加反向代理
+
+这是让手机能访问的关键。两种情况：
+
+### 情况 1：用子域名（推荐，如 `gz.example.com`）
+
+1. 面板 → **网站** → 添加站点
+   - 域名：`gz.example.com`
+   - 根目录：随便填 `/www/wwwroot/salary-keeper`（反代后根目录不参与实际服务）
+   - PHP 版本：**纯静态**
+2. 站点设置 → **反向代理** → 添加反向代理
+   - 代理名称：`salary`
+   - 目标 URL：`http://127.0.0.1:8080`
+   - 发送域名：`$host`
+3. 保存后浏览器打开 `http://gz.example.com/` 应该能看到工资通首页
+
+### 情况 2：挂在已有站点的子路径上
+
+比如已有 `example.com`，想用 `example.com/gz/`：
+
+在**已有站点**的配置里加一个 location（面板 → 站点设置 → 配置文件，或直接编辑
+`/www/server/panel/vhost/nginx/<你的站点>.conf`）：
+
+```nginx
+location /gz/ {
+    proxy_pass http://127.0.0.1:8080/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+> 注意 `proxy_pass` 末尾**带斜杠**：`/gz/` + `http://127.0.0.1:8080/` 会把前缀剥掉，
+> node 那边收到的就是 `/`。少了斜杠会 404。
+
+子路径方案会改动已有站点的配置，**改前先备份**（面板有「配置备份」，或
+`cp <站点>.conf <站点>.conf.bak`）。**能用子域名就别用子路径**，互相不干扰。
+
+改完必须重载：
+
+```bash
+nginx -t && bt reload      # 宝塔的 nginx 是这个路径
+# 或：/www/server/nginx/sbin/nginx -t && /www/server/nginx/sbin/nginx -s reload
+```
+
+`nginx -t` 报错就**不要 reload**，先改对。
+
+---
+
+## 第 5 步：HTTPS（iPhone 强烈建议）
+
+iOS 对混合内容限制很严：**HTTPS 页面不能请求 HTTP 接口**。
+你现有域名多半已经有证书，直接用就行。
+
+- 已有 HTTPS → 直接 `https://你的域名/`
+- 没配 → 面板 → 站点 → **SSL** → Let's Encrypt 免费证书 → 一键申请
+
+服务端不用改任何代码，nginx 反代后自动就是 HTTPS 了。
+
+---
+
+## 第 6 步：手机端配置
+
+1. Safari 打开 `https://你的域名/` → 添加到主屏幕（名字填「工资通」）
+2. 工资通 → 设置 → **云端打卡**：
+
+   | 字段 | 填什么 |
+   |---|---|
+   | 启用云端打卡 | 开 |
+   | 服务器地址 | `https://你的域名`（**不带路径、不带斜杠**） |
+   | 访问令牌 | 第 3 步里的 token |
+   | 公司时区 | `9` |
+
+3. 点「**测试连接**」→ 出现 `✅ 连接成功` 就通了
+4. 页面会自动生成「签到地址 / 签退地址」两行，各点一次复制
+
+> ⚠️ 不要再用 GitHub Pages 那个地址去连这个服务器：两个域名不同源，
+> 而且一个是 HTTPS、一个可能是 HTTP，会被浏览器拦。**页面和接口同源最省事。**
+
+---
+
+## 第 7 步：配快捷指令（锁屏能跑的关键）
+
+快捷指令 App → **自动化** → 新建：
 
 | 项 | 填什么 |
 |---|---|
-| 触发 | **到达** → 地点选公司 → 范围小一点（如 200 米） |
+| 触发 | **到达** → 地点选公司 → 范围 200 米左右 |
 | 动作 | **获取 URL 内容**（不是「打开 URL」，也不是「打开 App」） |
-| URL | 设置页里「签到地址」那一行，点复制 |
+| URL | 工资通设置页里「签到地址」那一行 |
 | 运行前询问 | **关掉** |
 
 再建一个一模一样的，触发改成 **离开**，URL 用「签退地址」。
 
-> **为什么必须是「获取 URL 内容」**：它是纯网络请求，不需要界面，所以锁屏、口袋、深夜里
-> 都能静默跑完。「打开 URL」和「打开 App」都需要唤起界面，锁屏下会被系统拦。
-
-### 4. 验证
-
-把手机拿到公司门口待一会儿，然后回工资通点「立即同步打卡」，
-应该能看到今天的签到时间。
+> **为什么必须是「获取 URL 内容」**：它是纯网络请求，不需要唤起界面，
+> 锁屏、锁屏口袋、深夜都能静默执行。「打开 URL」「打开 App」都要界面，锁屏必被系统拦。
 
 ---
 
-## 四、接口说明（备用/排错）
+## 第 8 步：验收清单
+
+在服务器终端逐条跑，全过才算部署好：
 
 ```bash
-# 探活
-curl "http://IP:8080/api/health?token=口令"
-# → {"ok":true,"serverDay":"2026-10-19","serverTime":"2026-10-19T17:11:03","tzOffset":9,"days":0}
+TOKEN=你的token
+# 1) 服务活着吗
+curl "http://127.0.0.1:8080/api/health?token=$TOKEN"
+#    期望 {"ok":true,...}
 
-# 打一笔卡
-curl "http://IP:8080/api/punch?token=口令&t=in"
-curl "http://IP:8080/api/punch?token=口令&t=out"
+# 2) 反代通了吗（把域名换成你的）
+curl "https://你的域名/api/health?token=$TOKEN"
+#    同样返回 ok:true —— 这步过了才说明 nginx 配对了
 
-# 取某月流水
-curl "http://IP:8080/api/punches?token=口令&month=2026-10"
+# 3) 首页能打开吗
+curl -s -o /dev/null -w "%{http_code}\n" "https://你的域名/"
+#    期望 200
 
-# 清掉某天（打错时用）
-curl "http://IP:8080/api/clear?token=口令&day=2026-10-19"
+# 4) 数据文件没被 nginx 暴露（必须 404 或 403）
+curl -s -o /dev/null -w "%{http_code}\n" "https://你的域名/server/data/punches.json"
+#    期望 404/403；如果返回 200，说明数据目录暴露了，回头检查目录安排
+
+# 5) 打卡能写进去吗
+curl "https://你的域名/api/punch?token=$TOKEN&t=in"
+curl "https://你的域名/api/punches?token=$TOKEN&month=$(date +%Y-%m)"
 ```
 
-内置两个防错：
-
-- **3 分钟防抖**：同类型打卡间隔不到 3 分钟视为快捷指令重复触发，直接忽略
-- **连续同类型自动补齐**：连着两次 `in` 会补一条 `out`，避免时间配对错位
+然后真机验证：拿手机到公司门口等一会儿，回工资通点「立即同步打卡」，看到今天的签到时间就算成功。
 
 ---
 
-## 五、常见问题
+## 第 9 步：备份与维护
 
-**Q：快捷指令跑了，但工资通里没数据？**
-按顺序查：① 手机上用浏览器打开 `/api/health?token=口令` 看能不能访问（服务器防火墙/端口是否放行）；
-② `TZ_OFFSET` 对不对（错了会记到昨天/明天）；③ 点「立即同步打卡」时选的月份对不对。
+**数据备份**（就一个目录，建议加到宝塔的计划任务）：
 
-**Q：能在外网访问吗？**
-需要服务器有公网 IP 且端口放行。家里宽带通常没有公网 IP，可以用 Cloudflare Tunnel
-把 HTTP 服务映射成 HTTPS 域名，免费且不用改代码。
+```bash
+# 手动备份
+tar czf ~/salary-backup-$(date +%F).tar.gz -C /www/wwwroot salary-keeper-data
 
-**Q：token 泄露了怎么办？**
-改 `TOKEN` 环境变量重启，然后在手机上改快捷指令里的 URL 和工资通设置里的令牌。
+# 每天凌晨 3:17 自动备份（避免整点与其他任务撞车）
+# 面板 → 计划任务 → Shell 脚本 → 填上面那条命令
+```
 
-**Q：想换端口/换机器？**
-数据只在 `server/data/punches.json` 一个文件里，拷走即可。
+**更新代码**（GitHub 有更新时）：
+
+```bash
+cd /www/wwwroot/salary-keeper
+git pull
+# 静态文件刷新即生效；node 服务端若改过，重启一下
+pm2 restart salary-keeper      # 或在 Node 项目面板点「重启」
+```
+
+数据在 `/www/wwwroot/salary-keeper-data/`，`git pull` 不会碰它。
+
+**同服务器多站点的注意事项**：
+
+- 端口要唯一（`ss -tlnp` 查），别撞上面已有的服务
+- 别把 8080 加进宝塔防火墙的放行列表——反代走 80/443，不需要额外端口
+- 别改 nginx 的 `default.conf` / `nginx.conf` 主配置，只动自己站点的 `.conf`
+- 改任何配置前先备份：`cp x.conf x.conf.bak`
+
+---
+
+## 常见问题
+
+**Q：反代后打开是 502 Bad Gateway？**
+node 没起来，或端口不对。`pm2 logs salary-keeper` 看日志；`ss -tlnp | grep 8080`
+确认端口在听。宝塔 Node 项目面板里也要看「项目日志」有没有启动报错。
+
+**Q：`nginx -t` 报 `location directive is not allowed here`？**
+粘贴位置不对——location 不能写在 `server` 块外面。子路径方案建议改用子域名。
+
+**Q：手机能打开首页，但「测试连接」失败？**
+多半是服务器地址填错了。必须是 `https://你的域名`，不能带 `/gz/` 这种路径
+（子路径方案下要填 `https://你的域名/gz`，且子路径反代要确认前缀剥掉）。
+
+**Q：快捷指令跑了但没数据？**
+按序查：① 手机浏览器打开 `https://你的域名/api/health?token=你的token` 能通吗
+（不通就是反代或防火墙问题）；② `TZ_OFFSET=9` 对不对（错了会记错日期）；
+③ 工资通点同步时选的月份对不对。
+
+**Q：token 泄露了？**
+改环境变量里的 `TOKEN`，重启服务；然后同步改手机工资通设置和两个快捷指令的 URL。
+泄露意味着别人能替你打卡。
+
+**Q：一定要开公网端口吗？**
+不用。反代走 80/443，服务端只听 127.0.0.1 公网打不到，这是最安全的形态。
+
+**Q：宝塔面板里「Node 项目」找不到？**
+说明没装 Node 版本管理器插件。走方式 B（PM2），前提是服务器已有 node ≥ 18：
+`node -v` 确认，没有就用宝塔「软件商店 → Node 版本管理器」装一个。

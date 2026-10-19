@@ -64,7 +64,7 @@ TOKEN=你的口令 PORT=8080 node server/server.js
 ```
 
 然后在 App【设置 → 云端打卡】填服务器地址 + 令牌，点「测试连接」，把生成的两条地址
-（`t=in` / `t=out`）复制进快捷指令的「获取 URL 内容」即可。详细部署见 [server/README.md](server/README.md)。
+（`t=in` / `t=out`）复制进快捷指令的「获取 URL 内容」即可。部署见 [server/README.md](server/README.md)（含宝塔面板 `/www/wwwroot/` 多站点环境的目录与反向代理安排）。
 
 要点：
 
@@ -269,10 +269,10 @@ node test/e2e.js           # 主流程 E2E：模拟 GPS 自动签到/签退，22
 node test/sync.e2e.js      # 「打开即校准」专项：自动签到/签退/防抖/未配置坐标，17 项
 node test/import.test.js   # 导入/导出：备份还原后数字一致，14 项
 node test/layout-check.js  # 布局回归：375/390/360 三种窄视口 × 四个页面 + 补签浮层，断言不可横向滚动、无越界元素，30 项
-node test/cloud.e2e.js     # 云端打卡：自起服务端 → 快捷指令打点 → 页面同步还原，含鉴权/防抖/时区/窄屏溢出，24 项
+node test/cloud.e2e.js     # 云端打卡：自起服务端 → 快捷指令打点 → 页面同步还原，含鉴权/防抖/时区/窄屏溢出，26 项
 ```
 
-九套测试共 **330 项断言**，需先启动本地服务：`python -m http.server 8901`（除 `cloud.e2e.js` 会自己拉起服务端外，其余 E2E 依赖它，不会自拉起）。测试截图在 `screenshots/`。
+九套测试共 **332 项断言**，需先启动本地服务：`python -m http.server 8901`（除 `cloud.e2e.js` 会自己拉起服务端外，其余 E2E 依赖它，不会自拉起）。测试截图在 `screenshots/`。
 
 ### 布局回归测什么
 

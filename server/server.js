@@ -16,9 +16,12 @@
  *
  * 可选环境变量：
  *   PORT        监听端口，默认 8080
+ *   HOST        监听地址，默认 127.0.0.1（只允许本机反代，公网打不开，更安全）
+ *               想让公网直接用 IP:端口 访问，改成 0.0.0.0
  *   TOKEN       访问令牌，不填则首次启动自动生成并写入 data/config.json
  *   TZ_OFFSET   公司所在时区偏移（小时），默认 9（韩国）
  *   PUBLIC_DIR  工资通站点目录，默认本文件所在目录的上一级
+ *   DATA_DIR    打卡数据目录，建议放在网站根目录之外，避免被 nginx 直接下载
  */
 
 const http = require('http');
@@ -27,6 +30,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const PORT = Number(process.env.PORT || 8080);
+const HOST = process.env.HOST || '127.0.0.1';
 const TZ_OFFSET = Number(process.env.TZ_OFFSET || 9);
 const PUBLIC_DIR = path.resolve(process.env.PUBLIC_DIR || path.join(__dirname, '..'));
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
@@ -235,12 +239,17 @@ const server = http.createServer((req, res) => {
   return serveStatic(req, res, p);
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, HOST, () => {
+  const shown = HOST === '0.0.0.0' ? '<你的服务器IP>' : HOST;
+  const viaProxy = HOST !== '0.0.0.0'
+    ? '  当前只监听本机（127.0.0.1），外部访问请让 nginx 反代到 127.0.0.1:' + PORT
+    : '';
   console.log('\n  工资通服务端已启动\n');
-  console.log('  站点地址   http://<你的服务器IP>:' + PORT + '/');
-  console.log('  打卡接口   http://<你的服务器IP>:' + PORT + '/api/punch?token=' + CFG.token + '&t=in');
-  console.log('  同步接口   http://<你的服务器IP>:' + PORT + '/api/punches?token=' + CFG.token + '&month=2026-10');
+  console.log('  站点地址   http://' + shown + ':' + PORT + '/');
+  console.log('  打卡接口   http://' + shown + ':' + PORT + '/api/punch?token=' + CFG.token + '&t=in');
+  console.log('  同步接口   http://' + shown + ':' + PORT + '/api/punches?token=' + CFG.token + '&month=2026-10');
   console.log('  公司时区   UTC+' + TZ_OFFSET);
-  console.log('  数据文件   ' + DATA_FILE + '\n');
+  console.log('  数据文件   ' + DATA_FILE);
+  if (viaProxy) console.log('\n' + viaProxy + '\n');
   console.log('  把上面「打卡接口」那两行（t=in / t=out）填进 iPhone 快捷指令的「获取 URL 内容」即可\n');
 });

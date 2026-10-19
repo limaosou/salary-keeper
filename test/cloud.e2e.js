@@ -8,7 +8,7 @@
  */
 const path = require('path');
 const { chromium } = require(path.join('C:', 'Users', 'Administrator', '.workbuddy', 'binaries', 'node', 'workspace', 'node_modules', 'playwright'));
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const fs = require('fs');
 const os = require('os');
@@ -27,6 +27,30 @@ const ok = (name, cond, extra = '') => {
   results.push([name, !!cond]);
   console.log(`${cond ? '✅' : '❌'} ${name}${extra ? '  ' + extra : ''}`);
 };
+
+/** 取出该端口真实的「绑定地址」。找不到返回 '' */
+function boundAddr(port) {
+  const want = String(port);
+  // ss -tlnp 的第 4 列就是绑定地址，形如 127.0.0.1:8912 / 0.0.0.0:8912 / *:8912
+  try {
+    const out = execFileSync('ss', ['-tlnp'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const hit = out.split(/\r?\n/).find(l => /LISTEN/.test(l) && new RegExp(`[:.]${want}\\s`).test(l));
+    if (hit) {
+      const col = hit.trim().split(/\s+/)[3];
+      if (col) return col.replace(/^\*:/, '0.0.0.0:');
+    }
+  } catch (e) { /* 没 ss 就退回 netstat */ }
+  // Windows netstat：TCP 127.0.0.1:8912 0.0.0.0:0 LISTENING
+  try {
+    const out = execFileSync('netstat', ['-ano'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const hit = out.split(/\r?\n/).find(l => /LISTENING/i.test(l) && l.includes(`:${want}`));
+    if (hit) {
+      const col = hit.trim().split(/\s+/)[1];
+      if (col) return col;
+    }
+  } catch (e) { /* 都没有就算了 */ }
+  return '';
+}
 
 const getJSON = async (u) => {
   const res = await fetch(u, { cache: 'no-store' });
@@ -70,6 +94,11 @@ async function punch(day, type, hour, minute) {
     ok('静态托管首页可访问', home.status === 200, `HTTP ${home.status}`);
     const secret = await fetch(`${API}/server/server.js`);
     ok('服务端源码不对外暴露', secret.status === 404, `HTTP ${secret.status}`);
+
+    // 宝塔多站点环境：服务端必须只监听本机，公网只能经 nginx 反代进来
+    const addr = boundAddr(PORT);
+    ok('默认只监听 127.0.0.1（不经 nginx 打不到公网）', addr === `127.0.0.1:${PORT}`, addr || '未查到');
+    ok('未监听 0.0.0.0', !!addr && !addr.startsWith('0.0.0.0'), '避免端口被公网直接扫到');
 
     console.log('\n──── 二、快捷指令打点（in / out）────');
     const p1 = await getJSON(`${API}/api/punch?token=${TOKEN}&t=in`);
