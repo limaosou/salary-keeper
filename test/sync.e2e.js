@@ -153,9 +153,8 @@ const activeOf = st => {
   await page.click('.tab[data-page="settings"]');
   await page.waitForTimeout(400);
   const guide = await page.innerHTML('#page-settings');
-  ok('设置页含快捷指令向导', guide.includes('打开 URL') && guide.includes('立即运行'));
-  const urlTxt = await page.textContent('#sync-url');
-  ok('向导展示可复制的唤醒地址', /^https?:\/\/.+index\.html$/.test(urlTxt.trim()), urlTxt.trim());
+  ok('设置页含快捷指令向导', guide.includes('打开 App') && guide.includes('立即运行'));
+  ok('向导不再要求服务器/令牌（纯本地）', !guide.includes('云端打卡') && !guide.includes('申领令牌'), '');
 
   await page.click('#btn-test-sync');
   await page.waitForTimeout(1500);

@@ -117,19 +117,7 @@ const Store = (() => {
       autoSyncOnOpen: true,      // 打开即校准
       lastSync: null,
       issues: [],
-      reentryGuard: 30,
-
-      // ===== 自建服务器同步（快捷指令只发网络请求，不打开页面）=====
-      cloud: {
-        enabled: false,
-        url: '',        // 例：http://1.2.3.4:8080
-        token: '',
-        invite: '',     // 多人模式下领令牌用的邀请码，领完就不需要留着
-        tzOffset: 9,    // 公司所在时区偏移（小时），韩国 9
-        syncOnOpen: false, // 打开页面时自动拉一次
-        lastSyncAt: null,
-        lastSyncCount: 0
-      },
+      reentryGuard: 30
     },
     attendance: {},   // { 'YYYY-MM-DD': { shiftType, segments:[{in,out}], restMinutes, perf, isRestDay } }
     actualPaid: {},   // { 'YYYY-MM': amount } 工资条实发（核对用）
@@ -269,9 +257,11 @@ const Store = (() => {
       s.profile = Object.assign(s.profile, parsed.profile || {});
       s.settings = Object.assign(s.settings, parsed.settings || {});
       // 嵌套对象也要合并，否则老数据升级后会丢掉新增的子字段
-      ['fence', 'shift', 'dailyPay', 'cloud'].forEach(k => {
-        s.settings[k] = Object.assign(DEFAULTS.settings[k], (parsed.settings || {})[k] || {});
+      // 用户本地可能还留着旧的 cloud 字段，读进来直接忽略即可
+      ['fence', 'shift', 'dailyPay'].forEach(k => {
+s.settings[k] = Object.assign(DEFAULTS.settings[k], (parsed.settings || {})[k] || {});
       });
+      if (parsed.settings && parsed.settings.cloud) delete s.settings.cloud;
       // 数组类配置：以存量数据为准（用户可能已增删），缺省才回落到默认
       ['allowances', 'deductions', 'taxBrackets', 'restWeekdays', 'holidays'].forEach(k => {
         const v = (parsed.settings || {})[k];

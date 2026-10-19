@@ -116,16 +116,6 @@
   }
 
   /* ---------- 全自动打卡：快捷指令配置 ---------- */
-  // 快捷指令要打开的地址：用当前站点 origin，兼容本地/线上
-  function syncUrl() {
-    return location.origin + location.pathname;
-  }
-
-  function renderSyncUrl() {
-    const el = $('sync-url');
-    if (el) el.textContent = syncUrl();
-  }
-
   // 自检：是否正以「主屏幕 App（PWA）」模式运行。
   // 只有在 Safari 里直接打开时才为 false —— 这正是「打开 App 列表里找不到工资通」的根因。
   function isStandaloneApp() {
@@ -686,92 +676,6 @@
   }
 
   /* ---------- 设置页 ---------- */
-  /* ---------- 云端打卡同步 ---------- */
-  function renderCloud() {
-    const c = (st().cloud) || {};
-    $('cloud-enabled').checked = !!c.enabled;
-    $('cloud-url').value = c.url || '';
-    $('cloud-token').value = c.token || '';
-    $('cloud-invite').value = c.invite || '';
-    $('cloud-tz').value = c.tzOffset === undefined ? 9 : c.tzOffset;
-    $('cloud-sync-on-open').checked = !!c.syncOnOpen;
-    // 有令牌才提醒备份 —— 令牌丢了服务端那边的数据就取不回来了
-    $('cloud-token-warn').hidden = !c.token;
-
-    const urls = CloudSync.punchUrls();
-    $('cloud-url-in').textContent = urls.in || '（填好服务器地址和令牌后显示）';
-    $('cloud-url-out').textContent = urls.out || '';
-    $('cloud-urls').hidden = !CloudSync.isOn();
-
-    const hint = $('cloud-hint');
-    if (!c.lastSyncAt) hint.textContent = '还没同步过';
-    else {
-      const d = new Date(c.lastSyncAt);
-      hint.textContent = `上次同步：${d.getMonth() + 1}/${d.getDate()} ` +
-        `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` +
-        ` · 拉到 ${c.lastSyncCount || 0} 天`;
-    }
-  }
-
-  function bindCloud() {
-    renderCloud();
-
-    $('cloud-enabled').onchange = e => { st().cloud.enabled = e.target.checked; Store.save(); renderCloud(); };
-    $('cloud-sync-on-open').onchange = e => { st().cloud.syncOnOpen = e.target.checked; Store.save(); };
-
-    const bind = (id, key, num) => {
-      $(id).oninput = e => {
-        st().cloud[key] = num ? Number(e.target.value) : e.target.value.trim();
-        Store.save();
-        if (id === 'cloud-url' || id === 'cloud-token') renderCloud();
-      };
-    };
-    bind('cloud-url', 'url');
-    bind('cloud-token', 'token');
-    bind('cloud-invite', 'invite');
-    bind('cloud-tz', 'tzOffset', true);
-
-    // 多人模式的服务器：点一下领个专属令牌，自动填进去并开启同步
-    $('btn-cloud-register').onclick = async () => {
-      const hint = $('cloud-hint');
-      hint.textContent = '正在申领令牌…';
-      const r = await CloudSync.register($('cloud-invite').value);
-      if (!r.ok) { hint.textContent = `❌ ${r.error}`; return; }
-      renderCloud();
-      hint.textContent = `✅ 已领到令牌 ${r.token.slice(0, 8)}… 记得导出备份留底`;
-    };
-
-    $('btn-cloud-test').onclick = async () => {
-      const hint = $('cloud-hint');
-      hint.textContent = '正在连接…';
-      const r = await CloudSync.ping();
-      hint.textContent = r.ok
-        ? `✅ 连接成功 · 服务器当前 ${r.serverDay} ${r.serverTime} · 已有 ${r.days} 天记录`
-        : `❌ ${r.error}`;
-    };
-
-    $('btn-cloud-sync').onclick = async () => {
-      const hint = $('cloud-hint');
-      hint.textContent = '正在同步…';
-      const ym = $('cur-month');                       // 跟随考勤页当前月份
-      const month = ym ? String(ym.textContent).trim() : '';
-      const r = await CloudSync.sync(month);
-      if (!r.ok) { hint.textContent = `❌ ${r.error}`; return; }
-      // 先重渲染（会把 hint 重置成「上次同步」），再写本次结果，否则提示被覆盖
-      renderCloud(); renderAttendance(); renderCalendar(); renderSalary(); refreshToday();
-      $('cloud-hint').textContent = r.days
-        ? `✅ 同步完成：${r.days} 天流水，${r.changed} 天有变化`
-        : '✅ 已连接，但这段时间服务器上没有打卡记录';
-    };
-
-    const copy = async (id, text) => {
-      try { await navigator.clipboard.writeText(text); toast('✅ 已复制'); }
-      catch (e) { toast('复制失败，请手动长按选中'); }
-    };
-    $('btn-copy-in').onclick = () => copy('btn-copy-in', CloudSync.punchUrls().in);
-    $('btn-copy-out').onclick = () => copy('btn-copy-out', CloudSync.punchUrls().out);
-  }
-
   function renderSettings() {
     const s = st();
     const p = Store.profile;
@@ -852,7 +756,6 @@
     $('fence-radius-label').textContent = `${s.fence.radius} 米`;
     $('set-reentry-guard').value = s.reentryGuard;
     $('sync-on-open-switch').checked = s.autoSyncOnOpen;
-    renderSyncUrl();
     renderStandaloneHint();
     renderIssues();
 
@@ -1050,16 +953,6 @@
       if (e.target.checked) syncState('toggle');
     };
 
-    $('btn-copy-url').onclick = async () => {
-      const url = syncUrl();
-      try {
-        await navigator.clipboard.writeText(url);
-        toast('✅ 地址已复制（仅「打开 URL」方式需要；锁屏全自动请用「打开 App」）');
-      } catch (err) {
-        toast('复制失败，请手动长按选中上方地址');
-      }
-    };
-
     $('btn-test-sync').onclick = async () => {
       const hint = $('test-hint');
       hint.textContent = '正在测试…';
@@ -1070,9 +963,6 @@
         : r.res.inside ? '✅ 测试通过：当前位置在公司内（状态已对齐，无需打卡）'
         : '✅ 测试通过：当前位置在公司外（状态已对齐，无需打卡）';
     };
-
-    // ---- 云端打卡（快捷指令只发网络请求，锁屏也不用打开页面）----
-    bindCloud();
 
     $('btn-clear-issues').onclick = () => {
       st().issues = []; Store.save(); renderIssues();
@@ -1243,13 +1133,6 @@
     // 打开即校准：让「快捷指令自动化打开本页」能自动对齐签到/签退
     if (st().autoSyncOnOpen) syncState('open');
     refreshToday();
-
-    // 云端打卡：打开页面时静默拉一次流水（失败也不打断使用）
-    if (CloudSync.isOn() && st().cloud.syncOnOpen) {
-      CloudSync.sync().then(r => {
-        if (r.ok && r.changed) { renderAttendance(); renderCalendar(); renderSalary(); refreshToday(); }
-      }).catch(() => {});
-    }
 
     // 实时跳动：每 15 秒刷新今日已赚
     tickTimer = setInterval(() => { if (!document.querySelector('#page-today').hidden) refreshToday(); }, 15000);

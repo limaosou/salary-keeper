@@ -58,7 +58,7 @@ const GEO_MOCK = () => {
     return { text: g ? g.textContent.replace(/\s+/g, ' ') : '', openApp: !!document.querySelector('.step-guide') };
   });
   ok('引导要求用「打开 App」而非「打开 URL」', guide.text.includes('打开 App') && !guide.text.includes('添加操作 → 搜索并添加 「打开 URL」'), '');
-  ok('引导写明锁屏打不开浏览器的排错', guide.text.includes('锁屏状态打不开浏览器'), '');
+  ok('引导写明锁屏只能唤起 App', guide.text.includes('只允许自动打开 App'), '');
   ok('引导给出充电器/蓝牙等备选触发器', guide.text.includes('连接充电器时') && guide.text.includes('蓝牙'), '');
   ok('引导写明「打开 App 找不到工资通」的排查', guide.text.includes('找不到「工资通」') && guide.text.includes('添加到主屏幕'), '');
 
