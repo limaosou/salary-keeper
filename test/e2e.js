@@ -81,7 +81,13 @@ const GEO_MOCK = () => {
   for (let i = 0; i < 4; i++) await page.click('#rest-minus');
   await page.waitForTimeout(200);
   let earned = Number(await page.textContent('#today-earned'));
-  ok('打卡后今日已赚 > 0', earned > 0, '当前 ' + earned.toFixed(2));
+  const nowH = new Date().getHours() + new Date().getMinutes() / 60;
+  if (nowH >= 8.5 && nowH <= 20.5) {
+    ok('打卡后今日已赚 > 0', earned > 0, '当前 ' + earned.toFixed(2));
+  } else {
+    // 深夜/凌晨签到：远超应到时间，按真实时间计（迟到超宽限），未签退 → 不白送整班
+    ok('非当班时段签到按真实时间计（不白送整班）', earned === 0, '当前 ' + earned.toFixed(2));
+  }
   await page.screenshot({ path: path.join(OUT, '1-今日-打卡中.png') });
 
   // ---------- GPS 移出公司 → 自动签退 ----------

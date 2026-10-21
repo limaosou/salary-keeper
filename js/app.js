@@ -409,14 +409,20 @@
       };
     });
 
-    // 已登记的特殊情况扣减回填到表单
+    // 已登记的特殊情况回填到表单
     const adj = Store.getAdjust(mkDate);
     $('mk-late').value = adj && adj.lateMin ? adj.lateMin : '';
     $('mk-early').value = adj && adj.earlyMin ? adj.earlyMin : '';
+    $('mk-add').value = adj && adj.addMin ? adj.addMin : '';
     $('mk-adjust-note').value = (adj && adj.note) || '';
-    $('mk-adjust-msg').textContent = adj && (adj.lateMin || adj.earlyMin)
-      ? `当前已登记：迟到 ${adj.lateMin || 0} 分 / 早退 ${adj.earlyMin || 0} 分${adj.note ? ' · ' + adj.note : ''}`
-      : '';
+    const adjParts = [];
+    if (adj) {
+      if (adj.lateMin) adjParts.push(`迟到 ${adj.lateMin} 分`);
+      if (adj.earlyMin) adjParts.push(`早退 ${adj.earlyMin} 分`);
+      if (adj.addMin) adjParts.push(`增加 ${adj.addMin} 分`);
+      if (adj.note) adjParts.push(adj.note);
+    }
+    $('mk-adjust-msg').textContent = adjParts.length ? `当前已登记：${adjParts.join(' · ')}` : '';
     $('mk-adjust-msg').className = 'hint';
 
     // 请假按钮文案随状态切换
@@ -475,6 +481,7 @@
       const r = Store.setAdjust(mkDate, {
         lateMin: $('mk-late').value,
         earlyMin: $('mk-early').value,
+        addMin: $('mk-add').value,
         note: $('mk-adjust-note').value
       });
       const msg = $('mk-adjust-msg');
@@ -485,7 +492,7 @@
     $('mk-adjust-save').onclick = saveAdjust;
     $('mk-adjust-clear').onclick = () => {
       if (!mkDate) return;
-      $('mk-late').value = ''; $('mk-early').value = ''; $('mk-adjust-note').value = '';
+      $('mk-late').value = ''; $('mk-early').value = ''; $('mk-add').value = ''; $('mk-adjust-note').value = '';
       saveAdjust();
     };
   }

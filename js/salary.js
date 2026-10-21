@@ -69,7 +69,8 @@ const Salary = (() => {
    *   · 手动签到 / 补签（seg.src === 'manual'）**视同按时出勤**——
    *     忘了打卡、12 点才想起来，都按当班正常时间算，不扣
    *   · 实际工时超出班次窗口的部分仍按加班计（extraOtHours）
-   *   · rec.adjust = { lateMin, earlyMin, note } 为特殊情况手工登记扣减
+   *   · rec.adjust = { lateMin, earlyMin, addMin, note } 为特殊情况手工登记：
+   *     迟到/早退按登记分钟扣减；干超过一班（12h）用 addMin 手动增加，另计算
    */
   function calcDay(rec, dateStr, opts = {}) {
     const st = Store.settings;
@@ -127,18 +128,21 @@ const Salary = (() => {
           ? schedEnd
           : Math.min(Math.max(lastOut, schedEnd), lastOut + earlyGrace));
 
-    // ---- ④ 特殊情况手工登记（迟到/早退 + 说明）----
+    // ---- ④ 特殊情况手工登记 ----
+    // 迟到/早退 → 扣减；干超过一班（12h）→ addMin 手动增加，另计算
     const adj = rec.adjust;
+    let addMs = 0;
     if (adj) {
       inEff += (Number(adj.lateMin) || 0) * 60000;
       outEff -= (Number(adj.earlyMin) || 0) * 60000;
+      addMs = Math.max(0, (Number(adj.addMin) || 0) * 60000);
     }
 
     // ---- ⑤ 未签退：最多算到「当前时刻」----
     if (openSeg && !lastOut) outEff = Math.min(outEff, nowForOpen.getTime());
 
-    // ---- ⑥ 计薪工时 = 班次窗口内（封顶）＋ 窗口外实际加班 ----
-    const paidMs = Math.max(0, Math.min(outEff - inEff - restMs, schedMs));
+    // ---- ⑥ 计薪工时 = 班次窗口内（封顶）＋ 窗口外实际加班 ＋ 手动登记增加 ----
+    const paidMs = Math.max(0, Math.min(outEff - inEff - restMs, schedMs)) + addMs;
     const extraMs = Math.max(0, actualMs - schedMs);
     const workHours = (paidMs + extraMs) / MS_H;
 
@@ -376,21 +380,28 @@ const Salary = (() => {
     // 今天还在进行中：只要已签到且未签退，不判早退/缺卡
     let isEarly = !manualOut && segEnd !== null && segEnd < endAt - earlyGrace;
 
-    // 特殊情况登记：手工登记的迟到/早退分钟数，直接体现在状态与工时上
+    // 特殊情况登记的迟到/早退分钟数，直接体现在状态与工时上
     if (adj && ((Number(adj.lateMin) || 0) > 0 || (Number(adj.earlyMin) || 0) > 0)) {
       if ((Number(adj.lateMin) || 0) > 0) isLate = true;
       if ((Number(adj.earlyMin) || 0) > 0) isEarly = true;
     }
 
-    const adjNote = adj && ((Number(adj.lateMin) || 0) > 0 || (Number(adj.earlyMin) || 0) > 0)
-      ? `（登记扣减：迟到 ${Number(adj.lateMin) || 0} 分 / 早退 ${Number(adj.earlyMin) || 0} 分${adj.note ? ' · ' + adj.note : ''}）`
-      : '';
+    // 登记说明汇总（扣减/增加都展示，月历上能看到这一天为什么特殊）
+    const adjParts = [];
+    if (adj) {
+      if ((Number(adj.lateMin) || 0) > 0) adjParts.push(`迟到 ${Number(adj.lateMin)} 分`);
+      if ((Number(adj.earlyMin) || 0) > 0) adjParts.push(`早退 ${Number(adj.earlyMin)} 分`);
+      if ((Number(adj.addMin) || 0) > 0) adjParts.push(`增加 ${Number(adj.addMin)} 分`);
+      if (adj.note) adjParts.push(adj.note);
+    }
+    const adjNote = adjParts.length ? `（登记：${adjParts.join(' · ')}）` : '';
 
     if (isLate && isEarly) return { ...line, code: 'lateearly', ...STATUS.lateearly, extra: adjNote };
     if (isLate) return { ...line, code: 'late', ...STATUS.late, extra: adjNote };
     if (isEarly) return { ...line, code: 'early', ...STATUS.early, extra: adjNote };
     if (manualIn || manualOut) {
-      return { ...line, code: 'normal', ...STATUS.normal, extra: '补签/手动 · 按当班时间计' };
+      // 有特殊情况登记时优先显示登记内容，否则显示手动/补签标注
+      return { ...line, code: 'normal', ...STATUS.normal, extra: adjNote || '补签/手动 · 按当班时间计' };
     }
     return { ...line, code: 'normal', ...STATUS.normal };
   }

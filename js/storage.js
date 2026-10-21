@@ -250,22 +250,28 @@ const Store = (() => {
   };
 
   /**
-   * 登记当日「特殊情况」扣减：迟到 / 早退分钟数 + 说明
-   * 手动签到/补签默认视同按时出勤；真有偏差（如上午外出 2 小时）时在这里登记，
-   * 工时按「班次时间 − 登记分钟」扣减，月历同步标记迟到/早退。
+   * 登记当日「特殊情况」：
+   *   · 迟到 / 早退分钟数 → 按「班次时间 − 登记分钟」扣减
+   *   · 增加分钟数 → 干超过一班（12 小时）的特殊情况手动补时间，另计算
+   * 手动签到/补签默认视同按时出勤（白班整班 11.5h 保底），防止忘打卡少算钱。
    */
-  const setAdjust = (dateStr, { lateMin = 0, earlyMin = 0, note = '' } = {}) => {
+  const setAdjust = (dateStr, { lateMin = 0, earlyMin = 0, addMin = 0, note = '' } = {}) => {
     const rec = day(dateStr);
     const late = Math.max(0, Math.min(600, Math.round(Number(lateMin) || 0)));
     const early = Math.max(0, Math.min(600, Math.round(Number(earlyMin) || 0)));
+    const add = Math.max(0, Math.min(600, Math.round(Number(addMin) || 0)));
     const txt = String(note || '').slice(0, 100);
-    if (!late && !early && !txt) { rec.adjust = null; save(); return { ok: true, msg: '已清除扣减登记' }; }
-    rec.adjust = { lateMin: late, earlyMin: early, note: txt, at: new Date().toISOString() };
+    if (!late && !early && !add && !txt) { rec.adjust = null; save(); return { ok: true, msg: '已清除登记' }; }
+    rec.adjust = { lateMin: late, earlyMin: early, addMin: add, note: txt, at: new Date().toISOString() };
     save();
-    return { ok: true, msg: (late || early) ? `已登记扣减：迟到 ${late} 分 / 早退 ${early} 分` : '已保存说明' };
+    const parts = [];
+    if (late) parts.push(`迟到 ${late} 分`);
+    if (early) parts.push(`早退 ${early} 分`);
+    if (add) parts.push(`增加 ${add} 分`);
+    return { ok: true, msg: parts.length ? `已登记：${parts.join(' / ')}` : '已保存说明' };
   };
 
-  /** 读取当日扣减登记 */
+  /** 读取当日特殊情况登记 */
   const getAdjust = dateStr => {
     const rec = state.attendance[dateStr];
     return (rec && rec.adjust) || null;
