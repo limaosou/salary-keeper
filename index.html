@@ -48,12 +48,11 @@
       </div>
       <div class="punch-actions">
         <button class="btn btn-primary" id="btn-manual-in">手动签到</button>
-        <button class="btn btn-ghost" id="btn-manual-out">手动签退</button>
       </div>
       <div class="hint" style="margin:8px 0 0">
-        手动签到 / 签退<b>按当班正常时间计薪</b>（白班 08:20–20:20、夜班 20:20–次日 08:20），
-        忘了打卡、晚点补都不会少算。地理围栏自动打卡按真实时间记，迟到早退会自动扣减；
-        真有特殊情况（迟到 / 早退 / 干超 12 小时），到【考勤】点对应日期登记增减。
+        <b>一次签到 = 一整天出勤</b>，按当班整班计薪（白班 08:20–20:20、夜班 20:20–次日 08:20），
+        不用签退，忘了打、晚点打都不会少算。
+        真有迟到 / 早退 / 加班，到【考勤】点对应日期 →「特殊情况登记」填分钟和说明。
       </div>
       <label class="switch-row">
         <span>自动打卡（地理围栏）</span>
@@ -142,15 +141,11 @@
         <div class="mk-block">
           <div class="mk-label">手工补签</div>
           <div class="hint" style="margin:0 0 8px">
-            手动签到 / 补签<b>按当班正常出勤退勤计薪</b>（按设定的上下班时间计时），
-            晚点打卡、忘了打卡都不扣时间。
-          </div>
-          <div class="seg-ctrl">
-            <button class="seg-btn active" data-type="in">补签到</button>
-            <button class="seg-btn" data-type="out">补签退</button>
+            <b>一次补签 = 那天整天出勤</b>，按班次整班计薪，晚点补、忘了补都不扣时间。
+            时间只作留痕，不影响钱。
           </div>
           <div class="mk-row">
-            <label for="mk-time">补签时间</label>
+            <label for="mk-time">时间（留痕）</label>
             <input type="time" id="mk-time" step="60">
           </div>
           <div class="mk-row">

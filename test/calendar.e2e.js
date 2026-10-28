@@ -40,12 +40,12 @@ const SEED = () => {
 
   att['2026-10-02'] = mk('2026-10-02');                        // 无记录工作日 → absent
   att['2026-10-05'] = mk('2026-10-05');                        // 法定假日无记录 → rest + 假日标
-  att['2026-10-06'] = mk('2026-10-06', '08:22', '20:20');      // 正常
-  att['2026-10-07'] = mk('2026-10-07', '09:30', '20:20');      // 迟到（应到 08:20）
-  att['2026-10-08'] = mk('2026-10-08', '08:20', '19:00');      // 早退（应退 20:20）
+  att['2026-10-06'] = mk('2026-10-06', '08:22', '20:20');      // 签到即出勤 → normal
+  att['2026-10-07'] = mk('2026-10-07', '09:30', '20:20', { adjust: { lateMin: 70, earlyMin: 0, addMin: 0, note: '睡过头' } });       // 登记迟到 → late
+  att['2026-10-08'] = mk('2026-10-08', '08:20', '19:00', { adjust: { lateMin: 0, earlyMin: 80, addMin: 0, note: '有事早走' } });     // 登记早退 → early
   att['2026-10-09'] = mk('2026-10-09', '08:20', '20:20');      // 法定假日出勤 → 全天 1.5 倍
-  att['2026-10-12'] = mk('2026-10-12', '10:30', '19:00');      // 周一迟到+早退（应到 10:20）
-  att['2026-10-13'] = mk('2026-10-13', '08:20', null);         // 缺卡（有签到无签退）
+  att['2026-10-12'] = mk('2026-10-12', '10:30', '19:00', { adjust: { lateMin: 10, earlyMin: 80, addMin: 0, note: '迟到早退' } });    // 登记迟到+早退 → lateearly
+  att['2026-10-13'] = mk('2026-10-13');                        // 无记录 → absent（补签后 normal）
   att['2026-10-14'] = mk('2026-10-14', null, null, { leave: { type: '연차', note: '休年假' } });
   att['2026-10-16'] = mk('2026-10-16', null, null, { isRestDay: true });
   cur.attendance = Object.assign(cur.attendance || {}, att);
@@ -84,7 +84,7 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
 
   const code = async d => page.getAttribute(cellSel(d), 'data-code');
 
-  console.log('\n──── 一、月历渲染与状态（新班次 08:20–20:20） ────');
+  console.log('\n──── 一、月历渲染与状态（一次签到 = 整天出勤） ────');
   ok('月历容器已渲染', (await page.$$(cellSel(6))).length === 1);
   const cellCount = await page.$$eval('.cal-cell', els => els.length);
   ok('格子数为整周 35 格', cellCount === 35, `实际 ${cellCount}`);
@@ -95,39 +95,34 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
     `补白 ${await page.$$eval('.cal-cell.pad', e => e.length)} 格`);
   ok('今天高亮标记为 15 号', (await page.$$(cellSel(15) + '.today')).length === 1);
 
-  ok('06 正常出勤 → normal', await code(6) === 'normal', await code(6));
-  ok('07 迟到 09:30 → late', await code(7) === 'late', await code(7));
-  ok('08 早退 19:00 → early', await code(8) === 'early', await code(8));
-  ok('12 周一 10:30 到（应到 10:20）→ lateearly', await code(12) === 'lateearly', await code(12));
-  ok('13 缺卡（未签退）→ missing', await code(13) === 'missing', await code(13));
+  ok('06 签到即出勤 → normal', await code(6) === 'normal', await code(6));
+  ok('07 登记迟到 → late', await code(7) === 'late', await code(7));
+  ok('08 登记早退 → early', await code(8) === 'early', await code(8));
+  ok('12 登记迟到+早退 → lateearly', await code(12) === 'lateearly', await code(12));
+  ok('13 无记录 → absent', await code(13) === 'absent', await code(13));
   ok('14 请假 → leave', await code(14) === 'leave', await code(14));
   ok('16 休息日 → rest', await code(16) === 'rest', await code(16));
   ok('02 无记录工作日 → absent', await code(2) === 'absent', await code(2));
   ok('15 今天未打卡 → pending（不误判旷工）', await code(15) === 'pending', await code(15));
   ok('20 未来日期 → future', await code(20) === 'future', await code(20));
-  ok('周一例外：10:22 到不算迟到', await page.evaluate(() => {
+  // 新口径：打卡时刻不再判罚，签到时刻再离谱、签退与否都不影响状态
+  ok('10:22 打卡未登记 → 照样 normal', await page.evaluate(() => {
     const r = Store.day('2026-10-19');
-    r.segments = [{ in: new Date('2026-10-19T10:22').toISOString(), out: new Date('2026-10-19T20:20').toISOString() }];
+    r.segments = [{ in: new Date('2026-10-19T10:22').toISOString(), out: null }];
     return Salary.judgeDay('2026-10-19', { now: new Date('2026-10-20') }).code;
   }) === 'normal');
-  ok('周二同样 10:22 到则算迟到', await page.evaluate(() => {
+  ok('只签到不签退 → normal（签退不再是必须动作）', await page.evaluate(() => {
     const r = Store.day('2026-10-20');
-    r.segments = [{ in: new Date('2026-10-20T10:22').toISOString(), out: new Date('2026-10-20T20:20').toISOString() }];
+    r.segments = [{ in: new Date('2026-10-20T08:20').toISOString(), out: null }];
     return Salary.judgeDay('2026-10-20', { now: new Date('2026-10-25') }).code;
-  }) === 'late');
+  }) === 'normal');
   // 周五夜班：20:20 上班 → 周六 06:20 下班（跨午夜归次日）
-  ok('周五夜班周六 06:20 退 → normal', await page.evaluate(() => {
+  ok('周五夜班补签 → normal（按 10h 短班计）', await page.evaluate(() => {
     const r = Store.day('2026-10-23');
     r.shiftType = 'night';
-    r.segments = [{ in: new Date('2026-10-23T20:20').toISOString(), out: new Date('2026-10-24T06:20').toISOString() }];
+    r.segments = [{ in: new Date('2026-10-23T20:20').toISOString(), out: null }];
     return Salary.judgeDay('2026-10-23', { now: new Date('2026-10-24T23:59:59') }).code;
   }) === 'normal');
-  ok('周五夜班周六 06:00 退 → early（按 06:20 算早退）', await page.evaluate(() => {
-    const r = Store.day('2026-10-23');
-    r.shiftType = 'night';
-    r.segments = [{ in: new Date('2026-10-23T20:20').toISOString(), out: new Date('2026-10-24T06:00').toISOString() }];
-    return Salary.judgeDay('2026-10-23', { now: new Date('2026-10-24T23:59:59') }).code;
-  }) === 'early');
 
   console.log('\n──── 二、韩国法定假日标识 ────');
   const holidayDays = await page.$$eval('.cal-cell.s-holiday', els => els.map(e => e.dataset.date));
@@ -161,34 +156,29 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
     `18→${await code(18)} 25→${await code(25)}`);
   ok('未来的普通工作日仍为 future', await code(21) === 'future', await code(21));
 
-  console.log('\n──── 五、手工补签 ────');
-  await page.click(cellSel(13));   // 缺卡：有签到无签退
+  console.log('\n──── 五、手工补签（一次补签 = 那天整天出勤） ────');
+  await page.click(cellSel(13));   // 无记录 → 旷工
   await page.waitForTimeout(350);
   ok('点击格子打开补签面板', !(await page.getAttribute('#mk-mask', 'hidden') === ''));
   ok('面板标题显示日期', (await page.textContent('#mk-title')) === '2026-10-13');
-  ok('面板状态徽标显示缺卡', (await page.textContent('#mk-status')).includes('缺卡'));
+  ok('面板状态徽标显示旷工', (await page.textContent('#mk-status')).includes('旷工'));
   const detail0 = await page.textContent('#mk-detail');
-  ok('明细展示现有打卡段', detail0.includes('08:20') && detail0.includes('未签退'));
-  ok('明细标注来源为自动打卡', detail0.includes('自动打卡'));
+  ok('无记录时明细为空提示', detail0.includes('当日无打卡记录'));
 
-  await page.click('.seg-btn[data-type="out"]');
-  await page.waitForTimeout(150);
-  await page.fill('#mk-time', '20:20');
+  await page.fill('#mk-time', '08:20');
   await page.fill('#mk-note', '忘打卡补签');
   await page.click('#mk-submit');
   await page.waitForTimeout(400);
   const msg1 = await page.textContent('#mk-msg');
-  ok('补签退提交成功', msg1.includes('成功'), msg1);
+  ok('补签提交成功', msg1.includes('成功'), msg1);
   ok('补签后状态自动刷新为 normal', await code(13) === 'normal', `实际 ${await code(13)}`);
-  ok('明细已含补签时间', (await page.textContent('#mk-detail')).includes('20:20'));
-  ok('明细标注来源为手动/补签', (await page.textContent('#mk-detail')).includes('手动/补签'));
+  ok('明细已含补签时间', (await page.textContent('#mk-detail')).includes('08:20'));
+  ok('明细标注来源为手动/补签', (await page.textContent('#mk-detail')).includes('补签'));
   ok('补签记录已留痕', (await page.textContent('#mk-logs')).includes('忘打卡补签'));
   ok('日历格子出现补签圆点', (await page.$$(cellSel(13) + ' .mkdot')).length === 1);
   ok('统计胶囊出现补签计数', (await page.textContent('#att-stat')).includes('补签'));
 
   console.log('\n──── 六、合法性校验 ────');
-  await page.click('.seg-btn[data-type="in"]');
-  await page.waitForTimeout(120);
   await page.fill('#mk-time', '10:00');
   await page.fill('#mk-note', '');
   await page.click('#mk-submit');
@@ -204,14 +194,12 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
   ok('非法补签类型被拒绝', badType.ok === false, badType.msg);
 
   console.log('\n──── 七、补签可追溯与撤销 ────');
-  await page.click('.seg-btn[data-type="out"]');
-  await page.waitForTimeout(150);
   page.once('dialog', d => d.accept());
   await page.click('#mk-logs .lx');
   await page.waitForTimeout(400);
-  ok('撤销后回到缺卡状态', await code(13) === 'missing', `实际 ${await code(13)}`);
+  ok('撤销后回到旷工状态', await code(13) === 'absent', `实际 ${await code(13)}`);
   ok('撤销后补签记录清空', (await page.textContent('#mk-logs')).includes('暂无'));
-  ok('撤销后明细回到未签退', (await page.textContent('#mk-detail')).includes('未签退'));
+  ok('撤销后明细回到无记录提示', (await page.textContent('#mk-detail')).includes('当日无打卡记录'));
   await page.click('#mk-close'); await page.waitForTimeout(200);
 
   console.log('\n──── 八、请假 / 休息日 ────');
@@ -297,13 +285,17 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
   ok('周休日选择器已渲染 7 天', (await page.$$('#set-rest-weekdays button')).length === 7);
   ok('默认周休为周日', (await page.$$eval('#set-rest-weekdays button', els => els.filter(b => b.classList.contains('on')).map(b => b.dataset.wd).join(','))) === '0');
 
-  // 把白班上班时间提前到 08:00，原本正常的 06 号（08:22 到）应变迟到
+  // 把白班上班时间提前到 08:00，06 号（一次签到）按新窗口重算整班工时
   await page.fill('#set-day-start', '08:00');
   await page.dispatchEvent('#set-day-start', 'change');
   await page.waitForTimeout(300);
   await page.click('.tab[data-page="attendance"]');
   await page.waitForTimeout(350);
-  ok('改白班上班时间后 06 号转迟到', await code(6) === 'late', `实际 ${await code(6)}`);
+  ok('改白班上班时间后 06 号按新窗口计薪（08:00–20:20 扣 30m = 11.83h）', await page.evaluate(() => {
+    const wh = Salary.judgeDay('2026-10-06', { now: new Date('2026-10-20') }).workHours;
+    return Math.abs(wh - 710 / 60) < 0.01;
+  }), await page.evaluate(() =>
+    Salary.judgeDay('2026-10-06', { now: new Date('2026-10-20') }).workHours.toFixed(2)));
 
   await page.click('.tab[data-page="settings"]');
   await page.waitForTimeout(300);

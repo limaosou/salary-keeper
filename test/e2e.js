@@ -75,35 +75,29 @@ const GEO_MOCK = () => {
   await page.evaluate(() => window.__fireGeo(37.5001, 127.0));   // 微移，仍在圈内
   await page.waitForTimeout(800);
   let state = await page.textContent('#today-status');
-  ok('进入公司区域自动签到', state.includes('打卡中'), '状态: ' + state);
+  ok('进入公司区域自动签到', state.includes('已签到'), '状态: ' + state);
 
-  // 默认扣 60 分钟午休，刚打卡几秒会被午休吃掉 → 点 4 次「−」把休息调成 0
-  for (let i = 0; i < 4; i++) await page.click('#rest-minus');
-  await page.waitForTimeout(200);
-  let earned = Number(await page.textContent('#today-earned'));
-  const nowH = new Date().getHours() + new Date().getMinutes() / 60;
-  if (nowH >= 8.5 && nowH <= 20.5) {
-    ok('打卡后今日已赚 > 0', earned > 0, '当前 ' + earned.toFixed(2));
-  } else {
-    // 深夜/凌晨签到：远超应到时间，按真实时间计（迟到超宽限），未签退 → 不白送整班
-    ok('非当班时段签到按真实时间计（不白送整班）', earned === 0, '当前 ' + earned.toFixed(2));
-  }
+  // 一次签到 = 整班计薪，签到金额立刻锁定，与运行时刻无关
+  // （页面金额带 ko-KR 千分位逗号，解析时去掉；以前实时累计只有几十원没暴露）
+  const earnedTxt = (await page.textContent('#today-earned')).replace(/,/g, '');
+  let earned = Number(earnedTxt);
+  ok('签到后今日已赚 = 整班金额', earned > 0, '当前 ' + earned.toLocaleString());
   await page.screenshot({ path: path.join(OUT, '1-今日-打卡中.png') });
 
-  // ---------- GPS 移出公司 → 自动签退 ----------
+  // ---------- GPS 移出公司 → 不签退、不计钱，考勤保持 ----------
   await page.evaluate(() => window.__fireGeo(37.6, 127.1));      // 约14公里外
   await page.waitForTimeout(800);
   state = await page.textContent('#today-status');
-  ok('离开公司区域自动签退', state.includes('已结束当日考勤'), '状态: ' + state);
-  earned = Number(await page.textContent('#today-earned'));
-  ok('签退后金额定格', earned > 0, '定格 ' + earned.toFixed(2));
+  ok('离开公司区域不签退，考勤保持已签到', state.includes('已签到'), '状态: ' + state);
+  earned = Number((await page.textContent('#today-earned')).replace(/,/g, ''));
+  ok('离开后金额不变（一次签到代表一整天）', earned > 0, '当前 ' + earned.toLocaleString());
   await page.screenshot({ path: path.join(OUT, '2-今日-已签退.png') });
 
-  // ---------- GPS 漂移进圈不应重复签到（防抖计数归零后需再次连续2次） ----------
+  // ---------- 回到公司不重复签到（一次签到 = 一整天，天然幂等） ----------
   await page.evaluate(() => window.__fireGeo(37.5, 127.0));
   await page.waitForTimeout(500);
   state = await page.textContent('#today-status');
-  ok('签退后单次漂移不自动重签', state.includes('已结束'), '状态: ' + state);
+  ok('回到公司不重复签到', state.includes('已签到'), '状态: ' + state);
 
   // ---------- 考勤页 ----------
   await page.click('.tab[data-page="attendance"]');

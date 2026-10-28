@@ -1,7 +1,7 @@
-/* E2E（专项）：验证「打开即校准」自动打卡
-   模拟 iOS 快捷指令自动化场景：页面被系统唤起 → 取一次定位 → 自动对齐状态
-   重点：页面不需要常驻常开，一次定位就要完成签到或签退 */
-const path = require('path');
+/* E2E（专项）：验证「打开即校准」自动签到
+   模拟 iOS 快捷指令自动化场景：页面被系统唤起 → 取一次定位 → 自动签到
+   重点：一次签到 = 一整天出勤，离开公司不签退、回公司不重复签 */
+   const path = require('path');
 const fs = require('fs');
 const { chromium } = require(path.join('C:', 'Users', 'Administrator', '.workbuddy', 'binaries', 'node', 'workspace', 'node_modules', 'playwright'));
 
@@ -83,48 +83,37 @@ const activeOf = st => {
   let syncTxt = await page.textContent('#sync-status');
   ok('场景1 校准状态条显示已签到', syncTxt.includes('自动签到'), syncTxt.trim().slice(0, 30));
 
-  /* ===== 场景2：离开公司后再次打开 → 应自动签退 ===== */
+  /* ===== 场景2：离开公司后再次打开 → 不签退，考勤保持一次签到 ===== */
   await page.evaluate(() => window.__setGeo(37.6, 127.1));   // 约14公里外
   await page.reload({ waitUntil: 'networkidle' });            // 快捷指令重新唤起页面
   await page.waitForTimeout(1200);
   st = await readState(page);
   seg = activeOf(st);
-  ok('场景2 离开后打开 → 自动签退', !seg, seg ? '仍处于打卡中' : '已结束');
+  ok('场景2 离开后打开 → 不签退（一次签到=一整天）', !!seg, seg ? '签到记录保持' : '记录消失');
   const segs = st.attendance[today()]?.segments || [];
-  const last = segs[segs.length - 1];
-  ok('场景2 签退原因标记为离开', last?.outReason === 'leave', `outReason=${last?.outReason}`);
-  ok('场景2 签退时间已写入', !!last?.out, last?.out || '缺失');
+  ok('场景2 签到记录未被改动', segs.length === 1 && !segs[0].out, `共 ${segs.length} 段`);
   syncTxt = await page.textContent('#sync-status');
-  ok('场景2 状态条显示已签退', syncTxt.includes('自动签退'), syncTxt.trim().slice(0, 30));
+  ok('场景2 状态条不出现签退动作', !syncTxt.includes('自动签退'), syncTxt.trim().slice(0, 30));
   await page.screenshot({ path: path.join(OUT, '7-自动签退.png') });
 
-  /* ===== 场景3：防抖 —— 离开后短时间回到公司，不应立刻重签 ===== */
-  await page.evaluate(() => window.__setGeo(37.5, 127.0));   // 立刻回公司
+  /* ===== 场景3：离开再回公司 → 幂等，不重复签到 ===== */
+  await page.evaluate(() => window.__setGeo(37.5, 127.0));   // 回公司
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForTimeout(1200);
   st = await readState(page);
-  ok('场景3 离开后立即回公司 → 防抖不重签', !activeOf(st),
-    activeOf(st) ? '被错误地重新签到了' : '正确保持已签退');
+  ok('场景3 回到公司 → 不重复签到', (st.attendance[today()]?.segments || []).length === 1,
+    `共 ${(st.attendance[today()]?.segments || []).length} 段`);
 
-  /* ===== 场景4：防抖期过后（模拟 reentryGuard=0）应能正常重签 ===== */
-  await page.evaluate(() => {
-    const s = JSON.parse(localStorage.getItem('salary_keeper_v1'));
-    s.settings.reentryGuard = 0;
-    localStorage.setItem('salary_keeper_v1', JSON.stringify(s));
-  });
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForTimeout(1200);
-  st = await readState(page);
-  ok('场景4 防抖期为0 → 回到公司正常重签', !!activeOf(st),
-    activeOf(st) ? '已重新签到' : '未签到');
-  const segs2 = st.attendance[today()].segments;
-  ok('场景4 当天形成两段打卡', segs2.length === 2, `共 ${segs2.length} 段`);
-
-  /* ===== 场景5：页面关闭状态下由快捷指令唤起，也能签退 ===== */
-  await page.evaluate(() => window.__setGeo(37.7, 127.2));   // 先走远
+  /* ===== 场景4：反复进出（走远再回来）→ 仍只有一次签到 ===== */
+  await page.evaluate(() => window.__setGeo(37.7, 127.2));   // 走远
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForTimeout(1000);
-  ok('场景5 走远后自动签退', !activeOf(await readState(page)));
+  await page.evaluate(() => window.__setGeo(37.5, 127.0));   // 又回来
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(1000);
+  st = await readState(page);
+  ok('场景4 反复进出 → 仍只有一次签到', (st.attendance[today()]?.segments || []).length === 1,
+    `共 ${(st.attendance[today()]?.segments || []).length} 段`);
 
   /* ===== 场景6：未配置围栏坐标时不应误打卡 ===== */
   await page.evaluate(() => {

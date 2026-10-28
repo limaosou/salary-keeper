@@ -21,32 +21,32 @@ const GEO_MOCK = () => {
   };
 };
 
-// 灌入工资条对应考勤：基础 15 天无加班 + 加班 39.3403h（凑 현장근로수당 617,840）
-// 起点用当班应到时间 08:20，并关掉迟到/早退宽限，使「计薪工时 = 8h + 加班」精确成立
+// 灌入工资条对应考勤：凑出现场근로수당 617,840 = 시급 10,470 × 1.5 × 39.3403h 加班
+// 2026-10-28 口径：每天只签一次到（整班），加班/扣减通过 rec.adjust 登记实现。
+// 白班（周二~五）整班 11h：目标加班 otH ≤ 3 → 登记迟到 (3−otH)×60 分；
+// otH > 3 → 登记增加 (otH−3)×60 分。日期全部避开周一 10:20 / 周五夜班短班窗口。
 // 注意：首次访问时 storage.js 的 load() 不写盘，所以这里不能依赖已存在的 key，
 // 直接写入 { attendance }，其余字段由 storage.js 的 DEFAULTS 合并补齐。
 const SEED = () => {
   const KEY = 'salary_keeper_v1';
   const cur = JSON.parse(localStorage.getItem(KEY) || '{}');
-  const HOUR = 3600000, att = {};
-  const base = [1, 2, 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 21];
-  const mk = (d, otH) => {
+  const att = {};
+  const targetH = 617840 / (10470 * 1.5);
+  const days = [1, 2, 3, 4, 8, 9, 10, 11, 15, 16, 17, 18, 22, 23, 24, 25, 29, 30]; // 周二~五共 18 天
+  const perDay = targetH / days.length;      // 每天摊 2.1856h 加班（< 3 → 走迟到登记）
+  const lateMin = (3 - perDay) * 60;
+  days.forEach(d => {
     const ds = `2026-09-${String(d).padStart(2, '0')}`;
-    const inM = new Date(`${ds}T08:20`).getTime();
-    const endM = inM + (8 + otH) * HOUR + 60 * 60000;
     att[ds] = {
       shiftType: 'day', restMinutes: 60, perf: 1, isRestDay: false,
-      segments: [{ in: new Date(inM).toISOString(), out: new Date(endM).toISOString() }]
+      segments: [{ in: `${ds}T08:20`, out: `${ds}T20:20` }],
+      adjust: { lateMin, earlyMin: 0, addMin: 0, note: '' }
     };
-  };
-  base.forEach(d => mk(d, 0));
-  let left = 617840 / (10470 * 1.5), day = 22;
-  while (left > 0.001 && day <= 30) { const h = Math.min(left, 12); mk(day, h); left -= h; day += 1; }
+  });
 
   Object.keys(cur.attendance || {}).forEach(k => { if (k.startsWith('2026-09')) delete cur.attendance[k]; });
   cur.attendance = Object.assign(cur.attendance || {}, att);
   cur.actualPaid = cur.actualPaid || {};
-  cur.settings = Object.assign(cur.settings || {}, { lateGrace: 0, earlyGrace: 0 });
   localStorage.setItem(KEY, JSON.stringify(cur));
   return Object.keys(cur.attendance).filter(k => k.startsWith('2026-09')).length;
 };
@@ -111,7 +111,7 @@ const num = s => Number(String(s).replace(/[^\d]/g, ''));
     && (await page.textContent('#sal-meta')).includes('성형부'));
 
   const attHtml = await page.innerHTML('#sal-attendance');
-  ok('考勤汇总显示总工时', attHtml.includes('총근로시간') && !attHtml.includes('>0.0h<'));
+  ok('考勤汇总显示总工时', attHtml.includes('총근로시간') && !attHtml.includes('총근로시간</span><b>0.0h'));
   await page.screenshot({ path: path.join(OUT, '9-工资条.png'), fullPage: true });
 
   // 用工资条实发额核对

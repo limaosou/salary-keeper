@@ -1,9 +1,9 @@
-/* 计薪计时规则专项 E2E（2026-10-20 新口径）
+/* 计薪计时规则专项 E2E（2026-10-28 口径：一次签到 = 整天出勤）
    验证：
-   ① 手动签到 / 补签 → 无论几点都按整班计时（晚点打卡、忘打卡不扣时间，防少算）
-   ② 地理围栏自动打卡 → 按真实时间，迟到/早退自动扣减
-   ③ 特殊情况登记 → 迟到/早退按登记分钟扣减；增加时间用于干超过 12 小时的特殊情况
-   ④ 超出班次窗口的实际加班照算
+   ① 手动/自动签到 → 无论几点都按整班计时，不签退也不影响钱
+   ② 迟到/早退/加班 → 全部走「特殊情况登记」分钟数增减，不自动判罚
+   ③ 离开公司不签退；重复签到幂等
+   ④ 周一夜班等特殊班次窗口照常生效
    用法：先起本地服务（node tmp/serve.js 或 python -m http.server 8901），再 node test/punch-rule.e2e.js */
 const path = require('path');
 const fs = require('fs');
@@ -87,19 +87,18 @@ let page0;
   ok('12 点才手动补签 → 仍按整班 11.5h', h && Math.abs(h.w - WORK) < 0.01, h ? h.w.toFixed(2) : 'null');
   const st13 = await page0.evaluate(() => Salary.judgeDay('2026-10-13', { now: new Date('2026-10-15T12:00:00') }));
   ok('补签日不判迟到（状态 normal）', st13.code === 'normal', st13.code);
-  ok('补签日有「按当班时间计」标注', (st13.extra || '').includes('按当班时间计'), st13.extra || '');
 
-  // ── ③ 自动打卡迟到 ──
+  // ── ③ 自动签到晚到 → 新口径同样按整班，不自动判罚 ──
   h = await hours('2026-10-15');
-  ok('自动打卡迟到 1h → 10.5h', h && Math.abs(h.w - 10.5) < 0.01, h ? h.w.toFixed(2) : 'null');
+  ok('自动签到晚到 1h → 也按整班 11.5h', h && Math.abs(h.w - WORK) < 0.01, h ? h.w.toFixed(2) : 'null');
   const st12 = await page0.evaluate(() => Salary.judgeDay('2026-10-15', { now: new Date('2026-10-20T12:00:00') }));
-  ok('迟到日月历标记 late', st12.code === 'late', st12.code);
+  ok('晚到未登记 → 状态 normal（偏差走登记）', st12.code === 'normal', st12.code);
 
-  // ── ④ 自动打卡早退 ──
+  // ── ④ 自动签到早走 → 同样按整班 ──
   h = await hours('2026-10-08');
-  ok('自动打卡早退 2h → 9.5h', h && Math.abs(h.w - 9.5) < 0.01, h ? h.w.toFixed(2) : 'null');
+  ok('自动签到早走 2h → 也按整班 11.5h', h && Math.abs(h.w - WORK) < 0.01, h ? h.w.toFixed(2) : 'null');
   const st08 = await page0.evaluate(() => Salary.judgeDay('2026-10-08', { now: new Date('2026-10-15T12:00:00') }));
-  ok('早退日月历标记 early', st08.code === 'early', st08.code);
+  ok('早走未登记 → 状态 normal', st08.code === 'normal', st08.code);
 
   // ── ⑤ 特殊情况登记 ──
   h = await hours('2026-10-07');
@@ -108,9 +107,9 @@ let page0;
   ok('登记扣减后标记 late', st07.code === 'late', st07.code);
   ok('说明文字出现在明细', (st07.extra || '').includes('上午外出办事'), st07.extra || '');
 
-  // ── ⑥ 超出窗口的加班 ──
+  // ── ⑥ 干到很晚不再自动算加班 → 需登记「增加时间」 ──
   h = await hours('2026-10-06');
-  ok('加班到 23:00 → 11.5h + 2.67h = 14.17h', h && Math.abs(h.w - (11.5 + 160 / 60)) < 0.01, h ? h.w.toFixed(2) : 'null');
+  ok('打卡到 23:00 未登记 → 仍按整班 11.5h', h && Math.abs(h.w - WORK) < 0.01, h ? h.w.toFixed(2) : 'null');
 
   // ── ⑦ 夜班手动补签按短班 ──
   h = await hours('2026-10-09');

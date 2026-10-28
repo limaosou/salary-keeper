@@ -63,14 +63,12 @@ const Salary = (() => {
    * 计算单日出勤数据（工时/夜班时/加班时）
    * 不直接算钱——月薪制下钱按月总额算，日结只统计工时
    *
-   * 计薪口径（2026-10-20 起）：**按班次应到/应退计时，不按实际打卡时刻**
-   *   · 基准 = shiftWindowFor 的窗口 − 每日休息扣除
-   *   · 自动（地理围栏）打卡按真实时间：迟到/早退超出宽限的部分扣减
-   *   · 手动签到 / 补签（seg.src === 'manual'）**视同按时出勤**——
-   *     忘了打卡、12 点才想起来，都按当班正常时间算，不扣
-   *   · 实际工时超出班次窗口的部分仍按加班计（extraOtHours）
-   *   · rec.adjust = { lateMin, earlyMin, addMin, note } 为特殊情况手工登记：
-   *     迟到/早退按登记分钟扣减；干超过一班（12h）用 addMin 手动增加，另计算
+   * 计薪口径（2026-10-28 起）：**一次签到 = 整天出勤，按班次整班计薪**
+   *   · 白班 08:20–20:20 扣 30m 休息 = 11.5h；周五夜班 20:20–06:20 = 9.5h
+   *   · 签到时刻、是否签退都不影响钱——防忘打卡、防忘签退少算
+   *   · 迟到 / 早退 → rec.adjust 登记分钟扣减
+   *   · 加班 → rec.adjust 登记增加分钟，超出 11.5h 的部分按 1.5 倍另算
+   *   · nowForOpen 参数保留只为兼容调用方，新口径下不再使用
    */
   function calcDay(rec, dateStr, opts = {}) {
     const st = Store.settings;
@@ -81,55 +79,20 @@ const Salary = (() => {
     };
     if (!rec || rec.isRestDay || !rec.segments.length) return result;
 
-    const nowForOpen = opts.nowForOpen || new Date();
     const shiftType = rec.shiftType || 'day';
     const restMs = (Number(rec.restMinutes) || 0) * 60000;
-    const lateGrace = (Number(st.lateGrace) || 0) * 60000;
-    const earlyGrace = (Number(st.earlyGrace) || 0) * 60000;
 
-    // ---- ① 实际在岗：各段累加（未签退段封顶到 nowForOpen），再扣每日休息 ----
-    const segs = rec.segments.filter(sg => sg.in);
-    let rawMs = 0;
-    let firstIn = null, lastOut = null, lastOutSeg = null, openSeg = null;
-    for (const sg of segs) {
-      const s = new Date(sg.in).getTime();
-      const e = sg.out ? new Date(sg.out).getTime() : nowForOpen.getTime();
-      if (e <= s) continue;
-      rawMs += e - s;
-      if (firstIn === null || s < firstIn) firstIn = s;
-      if (sg.out) {
-        if (lastOut === null || e > lastOut) { lastOut = e; lastOutSeg = sg; }
-      } else if (!openSeg) {
-        openSeg = sg;
-      }
-    }
-    if (firstIn === null) return result;
-    const actualMs = Math.max(0, rawMs - restMs);
-
-    // ---- ② 班次窗口（应到 / 应退）----
+    // ---- 班次窗口（应到 / 应退）----
     const schedStart = shiftBoundary(dateStr, shiftType, 'in', st).getTime();
     const schedEnd = shiftBoundary(dateStr, shiftType, 'out', st).getTime();
     const schedMs = Math.max(0, schedEnd - schedStart - restMs);
-    if (schedMs <= 0) {                     // 班次配置异常时退回实际工时
-      const wh = Math.max(0, actualMs - restMs) / MS_H;
-      return { ...result, workHours: wh, otHours: Math.max(0, wh - (Number(st.dailyHours) || 8)) };
-    }
+    if (schedMs <= 0) return result;        // 班次配置异常时不计薪
 
-    // ---- ③ 有效在岗区间 ----
-    // 手动签到/补签 → 起点视同应到；自动打卡 → 真实时间（宽限内不扣）
-    const manualIn = segs[0].src === 'manual';
-    const manualOut = !!lastOutSeg && lastOutSeg.src === 'manual';
-    let inEff = manualIn
-      ? schedStart
-      : Math.max(Math.min(firstIn, schedStart), firstIn - lateGrace);
-    let outEff = manualOut
-      ? schedEnd
-      : (lastOut === null
-          ? schedEnd
-          : Math.min(Math.max(lastOut, schedEnd), lastOut + earlyGrace));
+    // ---- 一次签到 = 整班 ----
+    let inEff = schedStart;
+    let outEff = schedEnd;
 
-    // ---- ④ 特殊情况手工登记 ----
-    // 迟到/早退 → 扣减；干超过一班（12h）→ addMin 手动增加，另计算
+    // ---- 特殊情况登记：迟到/早退扣减 + 超过一班增加 ----
     const adj = rec.adjust;
     let addMs = 0;
     if (adj) {
@@ -138,20 +101,13 @@ const Salary = (() => {
       addMs = Math.max(0, (Number(adj.addMin) || 0) * 60000);
     }
 
-    // ---- ⑤ 未签退：最多算到「当前时刻」----
-    if (openSeg && !lastOut) outEff = Math.min(outEff, nowForOpen.getTime());
+    const paidMs = Math.max(0, outEff - inEff - restMs) + addMs;
 
-    // ---- ⑥ 计薪工时 = 班次窗口内（封顶）＋ 窗口外实际加班 ＋ 手动登记增加 ----
-    const paidMs = Math.max(0, Math.min(outEff - inEff - restMs, schedMs)) + addMs;
-    const extraMs = Math.max(0, actualMs - schedMs);
-    const workHours = (paidMs + extraMs) / MS_H;
+    // 夜班时数 = 整班窗口与夜班时段的重叠（仅展示用，夜班补助按固定 3.5h 口径另计）
+    const nightMs = nightOverlapHours(inEff, outEff, st.nightStart, st.nightEnd) * MS_H;
 
-    // 夜班时数按有效在岗区间算（手动补签视同整班在岗）
-    const nightEnd = openSeg ? Math.max(nowForOpen.getTime(), inEff) : Math.max(lastOut || inEff, inEff);
-    const nightMs = nightOverlapHours(inEff, nightEnd, st.nightStart, st.nightEnd) * MS_H;
-
-    result.workHours = workHours;
-    result.otHours = Math.max(0, workHours - (Number(st.dailyHours) || 8));
+    result.workHours = paidMs / MS_H;
+    result.otHours = Math.max(0, result.workHours - (Number(st.dailyHours) || 8));
     result.nightHours = nightMs / MS_H;
     result.perf = st.perfMode === 'monthly'
       ? (Number(st.perfMonthly) || 1)
@@ -333,13 +289,11 @@ const Salary = (() => {
     return { ...base, ...statusFromSegments(rec, dateStr, st, now, isToday), hasSeg: true, segCount: rec.segments.length };
   }
 
-  /** 从打卡段判定 迟到/早退/缺卡/正常 */
+  /** 从打卡段判定 缺卡/迟到/早退/正常（2026-10-28 起一次签到 = 整天出勤） */
   function statusFromSegments(rec, dateStr, st, now, isToday) {
-    const dayMs = new Date(`${dateStr}T00:00:00`).getTime();
     const segs = rec.segments.filter(sg => sg.in);
     const segStart = segs[0] ? new Date(segs[0].in).getTime() : null;
     const openSeg = Store.activeSegment(rec);
-    // 最后签退时间（未签退则 null）
     let segEnd = null;
     segs.forEach(sg => {
       if (sg.out) {
@@ -349,8 +303,7 @@ const Salary = (() => {
     });
 
     const r = calcDay(rec, dateStr, {
-      // 只有「今天」才按当前时刻实时累计；往日未签退一律按当日 23:59 封顶，
-      // 否则会从那天一路算到今天，工时虚高几十倍
+      // 参数保留兼容；新口径下计薪与当前时刻无关
       nowForOpen: isToday ? now : new Date(`${dateStr}T23:59:59`)
     });
     const line = {
@@ -358,33 +311,14 @@ const Salary = (() => {
       firstIn: segStart, lastOut: segEnd, open: !!openSeg
     };
 
-    // 缺卡：完全没有签到，或有签到却没有签退且当天已结束
+    // 缺卡：只看有没有签到——签退不再是必须动作
     if (!segStart) return { ...line, code: 'missing', ...STATUS.missing };
-    if (openSeg && !isToday) return { ...line, code: 'missing', ...STATUS.missing };
 
-    // 按当日班次（白班/夜班）与星期例外取应到/应退时刻
-    const shiftType = rec.shiftType || 'day';
-    const startAt = shiftBoundary(dateStr, shiftType, 'in', st).getTime();
-    const endAt = shiftBoundary(dateStr, shiftType, 'out', st).getTime();
-    const lateGrace = (Number(st.lateGrace) || 0) * 60000;
-    const earlyGrace = (Number(st.earlyGrace) || 0) * 60000;
-
-    // 手动签到 / 补签：视同按时出勤，不因「忘了打卡、事后才补」判迟到早退
-    const manualIn = segs[0].src === 'manual';
-    let lastOutSeg = null;
-    segs.forEach(sg => { if (sg.out && new Date(sg.out).getTime() === segEnd) lastOutSeg = sg; });
-    const manualOut = !!lastOutSeg && lastOutSeg.src === 'manual';
+    // 迟到 / 早退完全由「特殊情况登记」驱动：
+    // 忘打卡、晚打卡、早走都不自动判罚（保底设计），有偏差自己登记
     const adj = rec.adjust || null;
-
-    let isLate = !manualIn && segStart > startAt + lateGrace;
-    // 今天还在进行中：只要已签到且未签退，不判早退/缺卡
-    let isEarly = !manualOut && segEnd !== null && segEnd < endAt - earlyGrace;
-
-    // 特殊情况登记的迟到/早退分钟数，直接体现在状态与工时上
-    if (adj && ((Number(adj.lateMin) || 0) > 0 || (Number(adj.earlyMin) || 0) > 0)) {
-      if ((Number(adj.lateMin) || 0) > 0) isLate = true;
-      if ((Number(adj.earlyMin) || 0) > 0) isEarly = true;
-    }
+    let isLate = adj && (Number(adj.lateMin) || 0) > 0;
+    let isEarly = adj && (Number(adj.earlyMin) || 0) > 0;
 
     // 登记说明汇总（扣减/增加都展示，月历上能看到这一天为什么特殊）
     const adjParts = [];
@@ -399,11 +333,7 @@ const Salary = (() => {
     if (isLate && isEarly) return { ...line, code: 'lateearly', ...STATUS.lateearly, extra: adjNote };
     if (isLate) return { ...line, code: 'late', ...STATUS.late, extra: adjNote };
     if (isEarly) return { ...line, code: 'early', ...STATUS.early, extra: adjNote };
-    if (manualIn || manualOut) {
-      // 有特殊情况登记时优先显示登记内容，否则显示手动/补签标注
-      return { ...line, code: 'normal', ...STATUS.normal, extra: adjNote || '补签/手动 · 按当班时间计' };
-    }
-    return { ...line, code: 'normal', ...STATUS.normal };
+    return { ...line, code: 'normal', ...STATUS.normal, extra: adjNote || undefined };
   }
 
   /* ============================================================

@@ -20,37 +20,20 @@
   const M = n => curSym() + money(n);   // 带货币符号
 
   /* ---------- 打卡动作 ---------- */
-  // src: 'auto'=地理围栏自动打卡（按真实时间计薪）
-  //      'manual'=手动签到/签退/补签（视同按时出勤，按班次时间计薪）
+  // 2026-10-28 起：一次签到 = 一整天出勤，没有签退这个动作。
+  // 迟到/早退/加班都到【考勤】的「特殊情况登记」里填，计薪不受打卡时刻影响。
   function punchIn(auto = false, reason = '') {
     const ds = todayStr();
     const rec = Store.day(ds);
-    if (Store.activeSegment(rec)) { toast('当前已在打卡中'); return false; }
+    if (rec.segments.length) {
+      if (!auto) toast('今天已签到 · 一次签到代表一整天');
+      return false;
+    }
     rec.segments.push({ in: new Date().toISOString(), out: null, auto, src: auto ? 'auto' : 'manual', reason });
     rec.isRestDay = false;
     Store.save();
     refreshToday();
-    toast(auto ? '📍 已进入公司区域，自动签到' : '✅ 已签到（按当班正常时间计薪）');
-    return true;
-  }
-
-  function punchOut(auto = false, reason = '') {
-    const ds = todayStr();
-    const rec = Store.attendance[ds];
-    const seg = rec && Store.activeSegment(rec);
-    if (!seg) { toast('当前未在打卡中'); return false; }
-    seg.out = new Date().toISOString();
-    seg.outReason = reason;
-    if (!seg.src) seg.src = auto ? 'auto' : 'manual';
-    Store.save();
-    refreshToday();
-    const r = Salary.calcDay(rec, ds, { nowForOpen: new Date() });
-    const s = st();
-    const kr = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
-    const dayPay = r.workHours * s.hourlyRate + r.otHours * s.hourlyRate * s.overtimeMultiplier;
-    toast(auto
-      ? `\u{1F4CD} 已离开公司区域，自动签退 · 今日 ${r.workHours.toFixed(1)}h · ${kr(dayPay)}원`
-      : `✅ 已签退 · 今日 ${r.workHours.toFixed(1)}h · ${kr(dayPay)}원（按当班时间计）`);
+    toast(auto ? '📍 已进入公司区域，自动签到（今日按整班计薪）' : '✅ 已签到 · 今日按整班计薪');
     return true;
   }
 
@@ -75,23 +58,13 @@
 
       const ds = todayStr();
       const rec = Store.attendance[ds];
-      const active = rec && Store.activeSegment(rec);
       let acted = null;
 
       if (res.inside) {
-        if (!active) {
-          // 防抖：刚签退（离场）后短时间内不重签，避免围栏边缘抖动反复打卡
-          const guard = (s.reentryGuard || 0) * 60000;
-          const last = rec && rec.segments[rec.segments.length - 1];
-          const recentlyLeft = last && last.out && last.outReason === 'leave'
-            && (Date.now() - new Date(last.out).getTime()) < guard;
-          if (!recentlyLeft) acted = punchIn(true, 'auto-sync-in') ? 'in' : null;
-        } else {
-          acted = null;   // 已在打卡中，无需动作
-        }
-      } else {
-        if (active) acted = punchOut(true, 'leave') ? 'out' : null;
+        // 一次签到 = 一整天：当天已有签到就不再动作（天然防抖，离开再回来也不会重复打）
+        if (!rec || !rec.segments.length) acted = punchIn(true, 'auto-sync-in') ? 'in' : null;
       }
+      // 离开公司区域不做事：没有签退概念，考勤已按整班锁定
 
       renderSyncStatus(res, acted, trigger);
       return { res, acted };
@@ -145,15 +118,12 @@
   function refreshToday() {
     const ds = todayStr();
     const rec = Store.attendance[ds];
-    const active = rec && Store.activeSegment(rec);
     const r = Salary.calcDay(rec || { segments: [], restMinutes: 0, isRestDay: false }, ds, { nowForOpen: new Date() });
     const s = st();
     const kr = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
 
-    // 当日金额按「标准 8h + 固定加班 3.5h(×1.5) + 夜班补助」结构随打卡进度实时累计：
-    //   前 8h            → 标准 ×1.0
-    //   第 8–11.5h       → 固定加班 ×1.5
-    //   超过 11.5h 的部分 → 仍按 ×1.5
+    // 当日金额 = 「标准 8h + 固定加班 3.5h(×1.5) + 夜班补助」：
+    // 一次签到即按整班锁定，迟到/早退/加班的增减走「特殊情况登记」
     const dp = s.dailyPay || {};
     const stdH = Number(dp.stdHours != null ? dp.stdHours : 8);
     const fixH = Number(dp.fixedOtHours != null ? dp.fixedOtHours : 3.5);
@@ -194,27 +164,23 @@
       if (holInfo) tags.push(`<span class="tag holiday">${holInfo.name} ×${holMul}</span>`);
       shiftTag.innerHTML = tags.join('');
     }
-    // 状态文案
+    // 状态文案：一次签到 = 一整天，没有"打卡中/已签退"之分
     if (!rec || !rec.segments.length) {
-      $('today-status').textContent = '尚未打卡';
+      $('today-status').textContent = '尚未签到';
       $('punch-title').textContent = GeoPunch.running() ? '监听中 · 等待进入区域' : '地理围栏待机中';
-      $('punch-desc').textContent = s.fence.lat ? '进入公司区域自动签到' : '请先到【设置】配置公司位置';
-    } else if (active) {
-      const t = new Date(active.in);
-      $('today-status').textContent = `打卡中 · ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')} 起`;
-      $('punch-title').textContent = '正在计时';
-      $('punch-desc').textContent = '离开公司区域将自动签退';
+      $('punch-desc').textContent = s.fence.lat ? '进入公司区域自动签到，或点下方手动签到' : '请先到【设置】配置公司位置';
     } else {
-      $('today-status').textContent = '已结束当日考勤';
-      $('punch-title').textContent = '今日已签退';
-      $('punch-desc').textContent = '当日工时已定格';
+      const t = new Date(rec.segments[0].in);
+      $('today-status').textContent = `已签到 · ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+      $('punch-title').textContent = '今日出勤已记录';
+      $('punch-desc').textContent = '一次签到代表一整天，按整班计薪；迟到/早退到【考勤】登记';
     }
 
     // 打卡状态点
+    const hasSeg = !!(rec && rec.segments.length);
     const ps = $('punch-state');
-    ps.className = 'punch-state ' + (active ? 'in' : 'out');
-    $('btn-manual-in').disabled = !!active;
-    $('btn-manual-out').disabled = !active;
+    ps.className = 'punch-state ' + (hasSeg ? 'in' : 'out');
+    $('btn-manual-in').disabled = hasSeg;
 
     // 当日明细：与 hero 的「已赚」同口径，按完成进度逐项累计
     const stdEarn = hStd * hourly;
@@ -256,7 +222,6 @@
 
   function bindToday() {
     $('btn-manual-in').onclick = () => punchIn(false);
-    $('btn-manual-out').onclick = () => punchOut(false);
 
     $('btn-sync').onclick = () => {
       $('sync-status').innerHTML = '<span class="sync-dot"></span>正在校准位置…';
@@ -336,38 +301,25 @@
   }
 
   /* ---------- 补签 / 请假面板 ---------- */
-  let mkDate = null, mkType = 'in';
+  let mkDate = null;
 
   function openMakeup(dateStr) {
     mkDate = dateStr;
-    // 默认动作要贴合当下情形：没签到 → 补签到；有签到未签退 → 补签退
-    const rec0 = Store.peek(dateStr);
-    const segs0 = (rec0 && rec0.segments) || [];
-    const hasOpen = segs0.some(sg => sg.out === null);
-    mkType = (segs0.length && hasOpen) ? 'out' : 'in';
-
     $('mk-title').textContent = dateStr;
     $('mk-note').value = '';
     $('mk-msg').textContent = '';
     $('mk-msg').className = 'hint';
-    $('mk-leave-type').value = (rec0 && rec0.leave && rec0.leave.type) || '연차';
-    syncSegBtn();
+    $('mk-leave-type').value = ((Store.peek(dateStr) || {}).leave && Store.peek(dateStr).leave.type) || '연차';
+    syncMkTime();
     renderMakeupPanel();
     $('mk-mask').hidden = false;
   }
 
   function closeMakeup() { $('mk-mask').hidden = true; mkDate = null; }
 
-  function syncSegBtn() {
-    document.querySelectorAll('.seg-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.type === mkType);
-    });
-    // 默认时间：补签到给标准上班时间，补签退给标准下班时间
-    const fallback = mkType === 'in' ? Store.settings.workStart : Store.settings.workEnd;
-    $('mk-time').value = fallback || (mkType === 'in' ? '09:00' : '18:00');
-    const hasIn = !!((Store.peek(mkDate) || {}).segments || []).length;
-    const btn = document.querySelector('.seg-btn[data-type="in"]');
-    if (btn) btn.textContent = hasIn ? '补签到（已有）' : '补签到';
+  // 一次补签 = 那天整天出勤，时间只作留痕，计薪按班次整班算
+  function syncMkTime() {
+    $('mk-time').value = Store.settings.workStart || '09:00';
   }
 
   function renderMakeupPanel() {
@@ -385,7 +337,7 @@
     $('mk-detail').innerHTML = segs.length
       ? segs.map((sg, i) => `<div class="mk-seg">
           <span>第 ${i + 1} 段 <i class="opic">${srcTag(sg)}</i></span>
-          <b>${fmtTime(sg.in)} – ${sg.out ? fmtTime(sg.out) : '<span class="opic">未签退</span>'}</b>
+          <b>${fmtTime(sg.in)}${sg.out ? ' – ' + fmtTime(sg.out) : ''}</b>
         </div>`).join('') +
         `<div class="mk-seg"><span>工时 / 加班</span><b>${st.workHours.toFixed(1)}h / ${st.otHours.toFixed(1)}h</b></div>` +
         (st.extra ? `<div class="mk-seg"><span>说明</span><b class="mk-note">${st.extra}</b></div>` : '')
@@ -434,17 +386,13 @@
     $('mk-close').onclick = closeMakeup;
     $('mk-mask').onclick = e => { if (e.target === $('mk-mask')) closeMakeup(); };
 
-    document.querySelectorAll('.seg-btn').forEach(b => {
-      b.onclick = () => { mkType = b.dataset.type; syncSegBtn(); };
-    });
-
     $('mk-submit').onclick = () => {
       if (!mkDate) return;
       const t = $('mk-time').value;
-      if (!t) return showMkMsg('请填写补签时间', false);
+      if (!t) return showMkMsg('请填写时间', false);
       const time = new Date(`${mkDate}T${t}:00`).getTime();
       const res = Store.addMakeup(mkDate, {
-        type: mkType,
+        type: 'in',                 // 一次补签 = 那天整天出勤
         time: new Date(time).toISOString(),
         note: $('mk-note').value.trim()
       });
@@ -531,9 +479,8 @@
     box.innerHTML = sum.dayList.map(({ dateStr, rec, rest }) => {
       const d = new Date(dateStr + 'T00:00:00');
       const wk = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
-      const open = !!Store.activeSegment(rec);
       const times = rec.segments.map(sg =>
-        `${fmtTime(sg.in)}–${sg.out ? fmtTime(sg.out) : '未签退'}`).join('　');
+        `${fmtTime(sg.in)}${sg.out ? '–' + fmtTime(sg.out) : ''}`).join('　');
       // 日薪统一走「标准 8h + 固定加班 3.5h + 夜班补助 + 假日 1.5 倍」口径
       const pay = Salary.calcDayPay(dateStr, {
         nowForOpen: dateStr === todayKey ? new Date() : new Date(`${dateStr}T23:59:59`)
@@ -554,24 +501,13 @@
         if (pay.holidayExtra > 0) parts.push(`假日加给 ${krN(pay.holidayExtra)}`);
         detail = parts.join(' · ');
       }
-      return `<div class="att-item" data-date="${dateStr}" data-open="${open}">
+      return `<div class="att-item" data-date="${dateStr}">
         <div class="att-date"><b>${d.getDate()}</b><i>周${wk}</i></div>
-        <div class="att-info"><b>${times || '未打卡'}${tag}${holTag}</b>
-          <span>${detail}${open && !rest ? ' · 点击补结算' : ''}</span></div>
+        <div class="att-info"><b>${times || '未签到'}${tag}${holTag}</b>
+          <span>${detail}</span></div>
         <div class="att-money">${pay.total > 0 ? krN(pay.total) : '—'}</div>
       </div>`;
     }).reverse().join('');
-
-    // 往日有未签退记录时，点击按当日 23:59 补结算
-    box.querySelectorAll('.att-item[data-open="true"]').forEach(el => el.onclick = () => {
-      const ds = el.dataset.date;
-      if (confirm(`${ds} 有未签退的打卡记录，是否按当日 23:59 结算？`)) {
-        const seg = Store.activeSegment(Store.attendance[ds]);
-        if (seg) seg.out = new Date(ds + 'T23:59:59').toISOString();
-        Store.save(); renderAttendance(); refreshToday();
-        toast('已补结算');
-      }
-    });
   }
 
   const fmtTime = iso => {
@@ -1135,9 +1071,9 @@
   }
 
   /* ---------- 地理围栏事件 ---------- */
+  // 离开公司区域不做事：一次签到 = 一整天，没有签退概念
   GeoPunch.setHandler((type, payload) => {
     if (type === 'enter' && st().autoPunch) punchIn(true);
-    else if (type === 'leave' && st().autoPunch) punchOut(true);
     else if (type === 'enter') $('punch-desc').textContent = '已在公司区域内';
     else if (type === 'error') toast('📍 ' + payload);
     else if (type === 'nofence') $('punch-desc').textContent = '请先到【设置】配置公司位置';

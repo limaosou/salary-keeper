@@ -66,62 +66,65 @@ eq('月计薪工时 = 176h（= 기본급÷시급）', Salary.monthlyStandardHour
 eq('주수 = 4일×8h×10470 = 335,040', Salary.weeklyBase(), 335040);
 eq('기본급 = 176 × 10,470 = 1,842,720', Math.round(Salary.monthlyStandardHours() * 10470), 1842720);
 
-console.log('\n══════ 三、单日工时（按班次应到/应退计时）══════');
-// 新口径：基准是「班次窗口 − 休息」，不是实际打卡时刻。
-// 手动签到/补签视同按时出勤；自动打卡迟到/早退才扣；超出窗口的算加班。
-Store.settings.lateGrace = 0;      // 测试里关掉宽限，便于精确断言
-Store.settings.earlyGrace = 0;
+console.log('\n══════ 三、单日工时（一次签到 = 整天出勤）══════');
+// 2026-10-28 口径：有签到就按班次整班计薪，签到时刻 / 是否签退都不影响钱。
+// 迟到/早退/加班全部通过 rec.adjust 登记分钟数增减。
 const mk = (dIn, dOut, rest = 60, extra = {}) => ({
   shiftType: 'day', restMinutes: rest, perf: 1, isRestDay: false,
   segments: [{ in: dIn, out: dOut }], ...extra
 });
+// 周二~周四白班窗口 08:20–20:20 扣 1h 休息 = 11h
 let r = Salary.calcDay(mk('2026-09-01T08:20', '2026-09-01T20:20'), '2026-09-01');
-eq('按时出勤 08:20–20:20 扣1h = 11h（标准8h+加班3h）', r.workHours, 11);
+eq('按时出勤 → 整班 11h（标准8h+加班3h）', r.workHours, 11);
 eq('加班 = 11 − 8 = 3h', r.otHours, 3);
 
-// 核心规则：12 点才想起来，手动补签 → 仍按整班 11h 算
-r = Salary.calcDay(mk('2026-09-02T12:00', '2026-09-02T20:20', 60, {
-  segments: [{ in: '2026-09-02T12:00', out: '2026-09-02T20:20', src: 'manual' }]
-}), '2026-09-02');
-eq('手动补签 12:00–20:20 仍按整班 11h', r.workHours, 11);
+// 12 点才签到 → 照样整班
+r = Salary.calcDay(mk('2026-09-02T12:00', '2026-09-02T20:20'), '2026-09-02');
+eq('12 点才签到 → 仍按整班 11h', r.workHours, 11);
 eq('不判迟到 → 无扣减', r.otHours, 3);
 
-// 自动打卡：真实迟到 40 分钟 → 扣 40 分钟
-r = Salary.calcDay(mk('2026-09-03T09:00', '2026-09-03T20:20'), '2026-09-03');
-eq('自动打卡迟到 40 分 → 11h − 40m = 10.33h', r.workHours, 620 / 60);
-
-// 自动打卡：早退 2 小时 → 扣 2 小时
-r = Salary.calcDay(mk('2026-09-04T08:20', '2026-09-04T18:20'), '2026-09-04');
-eq('自动打卡早退 2h → 11h − 2h = 9h', r.workHours, 9);
-
-// 特殊情况登记：上午外出 2 小时
-r = Salary.calcDay(mk('2026-09-06T08:20', '2026-09-06T20:20', 60, {
-  adjust: { lateMin: 120, earlyMin: 0, note: '上午外出办事' }
-}), '2026-09-06');
-eq('登记迟到 120 分 → 11h − 2h = 9h', r.workHours, 9);
-r = Salary.calcDay(mk('2026-09-07T08:20', '2026-09-07T20:20', 60, {
-  adjust: { lateMin: 0, earlyMin: 30, note: '提前下班' }
-}), '2026-09-07');
-eq('登记早退 30 分 → 11h − 0.5h = 10.5h', r.workHours, 10.5);
-
-// 超出班次窗口的实际加班照算
-r = Salary.calcDay(mk('2026-09-08T08:20', '2026-09-08T23:00'), '2026-09-08');
-eq('加班到 23:00 → 11h 班内 + 2.67h 加班 = 13.67h', r.workHours, (11 + 170 / 60));
-
+// 只签到不签退 → 也是整班（签退不再是必须动作）
 r = Salary.calcDay({
-  shiftType: 'night', restMinutes: 0, perf: 1, isRestDay: false,
-  segments: [{ in: '2026-09-10T22:00', out: '2026-09-11T06:00' }]
-}, '2026-09-10');
-eq('跨午夜夜班 22:00–06:00 = 8h', r.workHours, 8);
-eq('夜班重叠 8h（22:00–06:00 全覆盖）', r.nightHours, 8);
-eq('夜班超 8h 部分不计加班（跨日归次日）', r.otHours, 0);
+  shiftType: 'day', restMinutes: 60, perf: 1, isRestDay: false,
+  segments: [{ in: '2026-09-03T08:20', out: null }]
+}, '2026-09-03');
+eq('只签到不签退 → 整班 11h', r.workHours, 11);
 
-// 夜班手动补签：视同整班 20:20–08:20（用周三，避开周五 06:20 早下班的 10h 短班）
+// 自动签到 / 手动签到一视同仁：打卡时刻不影响钱，偏差走登记
+r = Salary.calcDay(mk('2026-09-04T09:00', '2026-09-04T18:20', 60, {
+  segments: [{ in: '2026-09-04T09:00', out: '2026-09-04T18:20', src: 'auto' }]
+}), '2026-09-04');
+eq('自动签到晚到早走 → 也按整班 11h', r.workHours, 11);
+
+// 登记迟到 120 分 → 11h − 2h = 9h
+r = Salary.calcDay(mk('2026-09-08T08:20', '2026-09-08T20:20', 60, {
+  adjust: { lateMin: 120, earlyMin: 0, note: '上午外出办事' }
+}), '2026-09-08');
+eq('登记迟到 120 分 → 11h − 2h = 9h', r.workHours, 9);
+// 登记早退 30 分 → 10.5h
+r = Salary.calcDay(mk('2026-09-09T08:20', '2026-09-09T20:20', 60, {
+  adjust: { lateMin: 0, earlyMin: 30, note: '提前下班' }
+}), '2026-09-09');
+eq('登记早退 30 分 → 11h − 0.5h = 10.5h', r.workHours, 10.5);
+// 登记增加 60 分 → 12h（加班另算）
+r = Salary.calcDay(mk('2026-09-10T08:20', '2026-09-10T20:20', 60, {
+  adjust: { lateMin: 0, earlyMin: 0, addMin: 60, note: '通宵加班' }
+}), '2026-09-10');
+eq('登记增加 60 分 → 11h + 1h = 12h', r.workHours, 12);
+eq('增加后加班 = 12 − 8 = 4h', r.otHours, 4);
+
+// 周一白班 10:20 上班 → 窗口 10:20–20:20 扣 1h = 9h
+r = Salary.calcDay(mk('2026-09-14T10:20', '2026-09-14T20:20'), '2026-09-14');
+eq('周一白班按 10:20–20:20 = 9h', r.workHours, 9);
+
+// 周三夜班整班 12h（20:20 → 次日 08:20）
 r = Salary.calcDay({
   shiftType: 'night', restMinutes: 0, perf: 1, isRestDay: false,
   segments: [{ in: '2026-09-16T23:00', out: '2026-09-17T07:00', src: 'manual' }]
 }, '2026-09-16');
-eq('夜班补签 23:00–07:00 按整班 12h', r.workHours, 12);
+eq('夜班补签按整班 12h', r.workHours, 12);
+eq('夜班重叠 8h（22:00–06:00）', r.nightHours, 8);
+eq('夜班加班 = 12 − 8 = 4h', r.otHours, 4);
 
 // 周五夜班是 10h 短班（06:20 早下班）
 r = Salary.calcDay({
@@ -134,31 +137,30 @@ r = Salary.calcDay({ shiftType: 'day', restMinutes: 0, perf: 1, isRestDay: true,
 eq('休息日不计薪', r.workHours, 0);
 
 console.log('\n══════ 四、月度汇总 → 应发逐项 ══════');
-// 构造 2026-09：20 个工作日基础 8h + 额外加班日，凑出现场근로수당 617,840
-// 617,840 = 10,470 × 1.5 × 39.34h → 加班总时长 39.34h
-// 用 6 个加班日实现：4天各 9h(=1h)+1天 3h+1天 4h → 4+3+4 = 11h... 继续分配凑 39.34
-// 更稳的做法：5 个加班日，分别 8h/8h/8h/8h/7.34h 超额
+// 2026-10-28 口径下的真实用法：每天只签一次到（整班），加班/扣减全靠「特殊情况登记」分钟数。
+// 目标：复现工资条上的 근로수당 617,840 = 시급 10,470 × 1.5 × 39.34034h 加班。
+// 3 个夜班（周二/三/四，12h 整班）各 +4h = 12h；14 个白班（周二~五，11h 整班）
+// 用登记 lateMin 把每天加班压到 1.9529h，合计 27.34h → 总加班 39.34h。
 const att = {};
-const addDay = (d, workH, restMin) => {
+const TARGET_OT = 617840 / (10470 * 1.5);          // 39.34034h 总加班
+const dayOT = (TARGET_OT - 12) / 14;               // 每个白班的加班小时
+const lateMin = (11 - 8 - dayOT) * 60;             // 白班整班 11h，登记迟到把加班压到 dayOT
+const addDay = d => {
   const ds = `2026-09-${String(d).padStart(2, '0')}`;
-  const start = 9;
-  const totalMin = workH * 60 + restMin;           // 在岗总时长
-  const endMin = start * 60 + totalMin;
-  const endH = String(Math.floor(endMin / 60)).padStart(2, '0');
-  const endM = String(Math.round(endMin % 60)).padStart(2, '0');
   att[ds] = {
-    shiftType: 'day', restMinutes: restMin, perf: 1, isRestDay: false,
-    segments: [{ in: `${ds}T09:00`, out: `${ds}T${endH}:${endM}` }]
+    shiftType: 'day', restMinutes: 60, perf: 1, isRestDay: false,
+    segments: [{ in: `${ds}T08:20`, out: `${ds}T20:20` }],
+    adjust: { lateMin, earlyMin: 0, addMin: 0, note: '' }
   };
 };
-// 17 个普通日（8h，无加班）
-[1, 2, 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 21, 22, 23].forEach(d => addDay(d, 8, 60));
-// 3 个普通夜班日（22:00-06:00，8h）
-[24, 25, 28].forEach(d => {
+// 14 个白班日（全部周二~周五，避开周一 10:20 特殊窗口）
+[1, 2, 4, 8, 9, 10, 11, 15, 17, 18, 22, 23, 25, 29].forEach(addDay);
+// 3 个夜班日（周二/三/四，12h 整班，避开周五 10h 短班）
+[3, 16, 24].forEach(d => {
   const ds = `2026-09-${String(d).padStart(2, '0')}`;
   att[ds] = {
     shiftType: 'night', restMinutes: 0, perf: 1, isRestDay: false,
-    segments: [{ in: `${ds}T22:00`, out: `${ds}T23:59` }]
+    segments: [{ in: `${ds}T20:20`, out: `${ds}T23:59` }]
   };
 });
 
@@ -216,30 +218,31 @@ const targetOT = 617840 / (10470 * 1.5);
 console.log(`   要复现 현장근로수당 617,840，需加班工时 ${targetOT.toFixed(4)}h`);
 eq('617,840 ÷ (10470×1.5) = 39.3403h', targetOT.toFixed(4), '39.3403');
 
-// 构造精确场景：按「加班小时数」累加到下班时间，天然跨天也正确
-// 起点用当班应到时间 08:20，配合上面关掉的宽限，可精确得到 8h + 加班
-const HOUR = 3600000;
+// 构造精确场景：新口径下加班/扣减通过 rec.adjust 登记实现。
+// 白班（周二~五）整班 11h：目标加班 otH ≤ 3 → 登记迟到 (3−otH)×60 分；
+// otH > 3 → 登记增加 (otH−3)×60 分。日期全部避开周一 10:20 / 周五夜班短班窗口。
 function makeAtt(spec) {
   const out = {};
   for (const [d, otH] of spec) {
     const ds = `2026-09-${String(d).padStart(2, '0')}`;
-    const inMs = new Date(`${ds}T08:20`).getTime();
-    const workMs = (8 + otH) * HOUR;            // 计薪工时 = 8h + 加班
-    const endMs = inMs + workMs + 60 * 60000;   // 在岗 = 计薪工时 + 午休
+    const adjust = otH < 3
+      ? { lateMin: (3 - otH) * 60, earlyMin: 0, addMin: 0, note: '' }
+      : { lateMin: 0, earlyMin: 0, addMin: (otH - 3) * 60, note: '' };
     out[ds] = {
       shiftType: 'day', restMinutes: 60, perf: 1, isRestDay: false,
-      segments: [{ in: new Date(inMs).toISOString(), out: new Date(endMs).toISOString() }]
+      segments: [{ in: `${ds}T08:20`, out: `${ds}T20:20` }], adjust
     };
   }
   return out;
 }
 
-// 基础：15 个无加班日
-const baseSpec = [1, 2, 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18, 21].map(d => [d, 0]);
+// 2026-09 的周二~周五共 18 天
+const ALL = [1, 2, 3, 4, 8, 9, 10, 11, 15, 16, 17, 18, 22, 23, 24, 25, 29, 30];
 const targetH = 617840 / (10470 * 1.5);
 
-// 场景 A：加班 38h（整数粒度）
-Store.replaceMonth('2026-09', makeAtt([...baseSpec, [22, 8], [23, 8], [24, 8], [25, 8], [28, 6]]));
+// 场景 A：加班 38h（整数粒度，10 天 × 3.8h，登记增加 48 分钟/天）
+const specA = [[1, 3.8], [2, 3.8], [4, 3.8], [8, 3.8], [9, 3.8], [10, 3.8], [11, 3.8], [15, 3.8], [17, 3.8], [18, 3.8]];
+Store.replaceMonth('2026-09', makeAtt(specA));
 const s2 = Salary.calcMonth(2026, 9);
 const ot2 = s2.grossItems.find(i => i.id === 'a2').amount;
 console.log(`   场景A 加班 ${s2.otHours.toFixed(2)}h → 현장근로수당 ${ot2.toLocaleString()}`);
@@ -250,14 +253,8 @@ const expectOT = Math.round(targetH * 10470 * 1.5);
 eq('与工资条加班费差额 = 工时差×시급×1.5',
   Math.abs(expectOT - ot2), Math.round(Math.abs(targetH - s2.otHours) * 10470 * 1.5));
 
-// 场景 B：按工资条反推工时精确复现全部三个数
-const specB = [...baseSpec];
-let leftH = targetH, day = 22;
-while (leftH > 0.001 && day <= 31) {
-  const h = Math.min(leftH, 12);
-  specB.push([day, h]);
-  leftH -= h; day += 1;
-}
+// 场景 B：按工资条反推工时精确复现全部三个数（18 天均摊，每天登记迟到 48.87 分）
+const specB = ALL.map(d => [d, targetH / ALL.length]);
 Store.replaceMonth('2026-09', makeAtt(specB));
 const s3 = Salary.calcMonth(2026, 9);
 const ot3 = s3.grossItems.find(i => i.id === 'a2').amount;
