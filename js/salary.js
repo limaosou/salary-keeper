@@ -235,6 +235,7 @@ const Salary = (() => {
     const hi0 = holidayInfo(dateStr, st);
     const base = {
       dateStr, hasSeg: false, segCount: 0, workHours: 0, otHours: 0,
+      shiftType: rec ? (rec.shiftType || 'day') : 'day',
       firstIn: null, lastOut: null, open: false, isRest: false,
       isHoliday: !!hi0, holidayName: hi0 ? hi0.name : '',
       pay: null,

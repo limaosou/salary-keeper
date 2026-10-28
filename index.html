@@ -103,7 +103,7 @@
 
     <!-- 月历视图 -->
     <div class="card">
-      <div class="card-title">本月日历 <i class="ct-sub">点击日期可补签 / 请假</i></div>
+      <div class="card-title">本月日历 <i class="ct-sub">点击日期可补签 / 请假 · 带「夜」为夜班</i></div>
       <div class="cal-head">
         <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
       </div>
@@ -137,6 +137,15 @@
       </div>
       <div class="sheet-body">
         <div id="mk-detail" class="mk-block"></div>
+
+        <div class="mk-block">
+          <div class="mk-label">班次（白班 / 夜班）</div>
+          <div class="seg-ctrl" id="mk-shift-ctrl">
+            <button type="button" class="seg-btn" id="mk-shift-day">☀️ 白班</button>
+            <button type="button" class="seg-btn" id="mk-shift-night">🌙 夜班</button>
+          </div>
+          <div class="hint" id="mk-shift-info" style="margin:0"></div>
+        </div>
 
         <div class="mk-block">
           <div class="mk-label">手工补签</div>

@@ -272,14 +272,18 @@
       const cls = ['cal-cell', 's-' + code];
       // 法定节假日：单独配色 + 显示假日名，便于一眼看出哪天休息
       if (c.isHoliday) cls.push('s-holiday');
+      // 夜班：格子加靛蓝描边 + 「夜」角标，与白班一眼区分
+      const isNight = c.shiftType === 'night';
+      if (isNight) cls.push('is-night');
       if (c.dateStr === todayKey) cls.push('today');
       if (tappable) cls.push('tappable');
       const sub = c.code === 'future' ? '' : `<span class="cs">${c.sym}</span>`;
+      const ntag = isNight ? '<span class="cnight">夜</span>' : '';
       const hours = (c.code !== 'future' && c.workHours > 0) ? `<span class="ch">${c.workHours.toFixed(1)}h</span>` : '';
       const dot = (c.makeups && c.makeups.length) ? '<span class="mkdot"></span>' : '';
       const title = c.isHoliday ? ` title="${c.holidayName || '공휴일'}${c.hasSeg ? ' · 出勤全天×1.5' : ''}"` : '';
       return `<div class="${cls.join(' ')}" data-date="${c.dateStr}" data-code="${code}"${title}${tappable ? ' role="button" tabindex="0"' : ''}>
-        <span class="cd">${c.date}</span>${sub}${hours}${dot}
+        <span class="cd">${c.date}</span>${sub}${ntag}${hours}${dot}
       </div>`;
     }).join('');
 
@@ -310,6 +314,7 @@
     $('mk-msg').textContent = '';
     $('mk-msg').className = 'hint';
     $('mk-leave-type').value = ((Store.peek(dateStr) || {}).leave && Store.peek(dateStr).leave.type) || '연차';
+    syncMkShift();
     syncMkTime();
     renderMakeupPanel();
     $('mk-mask').hidden = false;
@@ -317,9 +322,46 @@
 
   function closeMakeup() { $('mk-mask').hidden = true; mkDate = null; }
 
-  // 一次补签 = 那天整天出勤，时间只作留痕，计薪按班次整班算
+  // 一次补签 = 那天整天出勤，时间只作留痕，计薪按班次整班算。
+  // 默认时间取该日班次的上班时刻（白班 08:20 / 夜班 20:20），纯留痕不影响钱
   function syncMkTime() {
-    $('mk-time').value = Store.settings.workStart || '09:00';
+    if (!mkDate) return;
+    const rec = Store.peek(mkDate);
+    const isNight = !!(rec && rec.shiftType === 'night');
+    const w = Salary.shiftWindowFor(mkDate, isNight ? 'night' : 'day', Store.settings);
+    $('mk-time').value = w.start || '08:20';
+  }
+
+  /** 补签面板：班次选择（白班/夜班）——决定该日按哪个整班窗口计薪 */
+  function syncMkShift() {
+    if (!mkDate) return;
+    const rec = Store.peek(mkDate);
+    const isNight = !!(rec && rec.shiftType === 'night');
+    $('mk-shift-day').classList.toggle('active', !isNight);
+    $('mk-shift-night').classList.toggle('active', isNight);
+    const w = Salary.shiftWindowFor(mkDate, isNight ? 'night' : 'day', Store.settings);
+    const restMin = (rec && rec.restMinutes != null) ? rec.restMinutes
+      : (Store.settings.restMinutes != null ? Store.settings.restMinutes : 30);
+    const start = new Date(`${mkDate}T${w.start}:00`);
+    const end = new Date(`${mkDate}T${w.end}:00`);
+    if (w.crossMidnight) end.setDate(end.getDate() + 1);
+    const hrs = ((end - start - restMin * 60000) / 3600000).toFixed(1);
+    $('mk-shift-info').innerHTML =
+      `该日按 <b>${isNight ? '🌙 夜班' : '☀️ 白班'}</b> 计：${w.start} – ${w.crossMidnight ? '次日 ' : ''}${w.end}` +
+      `（扣休 ${restMin} 分，整班 <b>${hrs}h</b>）${w.note ? ' · ' + w.note : ''}`;
+  }
+
+  function setMkShift(type) {
+    if (!mkDate) return;
+    const rec = Store.day(mkDate);
+    if (rec.shiftType === type) return;
+    rec.shiftType = type;
+    Store.save();
+    toast(type === 'night' ? '🌙 该日已按夜班计薪' : '☀️ 该日已按白班计薪');
+    syncMkShift();
+    syncMkTime();
+    renderMakeupPanel();
+    refreshAll();
   }
 
   function renderMakeupPanel() {
@@ -331,17 +373,20 @@
     badge.className = 'lg s-' + st.code;
     badge.textContent = st.label;
 
-    // 打卡明细
+    // 打卡明细（首行固定显示该日班次）
     const segs = rec && rec.segments ? rec.segments : [];
+    const isNightRec = !!(rec && rec.shiftType === 'night');
     const srcTag = sg => sg.src === 'manual' ? '手动/补签' : (sg.src === 'auto' ? '自动打卡' : (sg.makeup ? '手工补签' : '自动打卡'));
-    $('mk-detail').innerHTML = segs.length
+    $('mk-detail').innerHTML =
+      `<div class="mk-seg"><span>班次</span><b>${isNightRec ? '🌙 夜班' : '☀️ 白班'}</b></div>` +
+      (segs.length
       ? segs.map((sg, i) => `<div class="mk-seg">
           <span>第 ${i + 1} 段 <i class="opic">${srcTag(sg)}</i></span>
           <b>${fmtTime(sg.in)}${sg.out ? ' – ' + fmtTime(sg.out) : ''}</b>
         </div>`).join('') +
         `<div class="mk-seg"><span>工时 / 加班</span><b>${st.workHours.toFixed(1)}h / ${st.otHours.toFixed(1)}h</b></div>` +
         (st.extra ? `<div class="mk-seg"><span>说明</span><b class="mk-note">${st.extra}</b></div>` : '')
-      : `<div class="mk-empty">当日无打卡记录${st.leave ? `（已登记请假：${st.leave.type}）` : ''}</div>`;
+      : `<div class="mk-empty">当日无打卡记录${st.leave ? `（已登记请假：${st.leave.type}）` : ''}</div>`);
 
     // 补签留痕
     const logs = (rec && rec.makeups) || [];
@@ -385,6 +430,10 @@
   function bindCalendar() {
     $('mk-close').onclick = closeMakeup;
     $('mk-mask').onclick = e => { if (e.target === $('mk-mask')) closeMakeup(); };
+
+    // 班次切换：白班 / 夜班（影响该日整班计薪窗口）
+    $('mk-shift-day').onclick = () => setMkShift('day');
+    $('mk-shift-night').onclick = () => setMkShift('night');
 
     $('mk-submit').onclick = () => {
       if (!mkDate) return;

@@ -202,6 +202,35 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
   ok('撤销后明细回到无记录提示', (await page.textContent('#mk-detail')).includes('当日无打卡记录'));
   await page.click('#mk-close'); await page.waitForTimeout(200);
 
+  console.log('\n──── 七点五、班次区分（白班 / 夜班） ────');
+  await page.click(cellSel(13));
+  await page.waitForTimeout(350);
+  ok('面板默认白班高亮', await page.$eval('#mk-shift-day', e => e.classList.contains('active')));
+  ok('明细首行显示班次', (await page.textContent('#mk-detail')).includes('白班'));
+  const info0 = await page.textContent('#mk-shift-info');
+  ok('白班窗口 08:20–20:20 · 整班 11.5h', info0.includes('08:20') && info0.includes('11.5h'), info0);
+  ok('留痕时间默认取班次上班时刻 08:20', (await page.inputValue('#mk-time')) === '08:20');
+  await page.click('#mk-shift-night');
+  await page.waitForTimeout(400);
+  ok('切换后夜班按钮高亮', await page.$eval('#mk-shift-night', e => e.classList.contains('active')));
+  ok('该日记录 shiftType 已改为 night',
+    await page.evaluate(() => (Store.peek('2026-10-13') || {}).shiftType) === 'night');
+  const info1 = await page.textContent('#mk-shift-info');
+  ok('夜班窗口 20:20 – 次日 08:20', info1.includes('20:20') && info1.includes('次日'), info1);
+  ok('留痕时间跟随班次变为 20:20', (await page.inputValue('#mk-time')) === '20:20');
+  ok('明细班次行变为夜班', (await page.textContent('#mk-detail')).includes('夜班'));
+  await page.click('#mk-close'); await page.waitForTimeout(250);
+  ok('月历夜班格带描边和「夜」角标', (await page.$$(cellSel(13) + '.is-night .cnight')).length === 1);
+  ok('judgeDay 暴露 shiftType=night',
+    await page.evaluate(() => Salary.judgeDay('2026-10-13', { now: new Date('2026-10-14') }).shiftType) === 'night');
+  // 切回白班，恢复原状，避免影响后续用例
+  await page.click(cellSel(13));
+  await page.waitForTimeout(350);
+  await page.click('#mk-shift-day');
+  await page.waitForTimeout(400);
+  await page.click('#mk-close'); await page.waitForTimeout(200);
+  ok('切回白班后月历「夜」角标消失', (await page.$$(cellSel(13) + ' .cnight')).length === 0);
+
   console.log('\n──── 八、请假 / 休息日 ────');
   await page.click(cellSel(2));           // 02 是无记录 → 旷工
   await page.waitForTimeout(350);
