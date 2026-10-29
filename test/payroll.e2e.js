@@ -128,8 +128,9 @@ const SEED = () => {
     return { isHoliday: p.isHoliday, name: p.holidayName, extra: p.holidayExtra, total: p.total };
   });
   ok('10-09 被识别为法定假日（한글날）', holPay.isHoliday && holPay.name === '한글날', holPay.name);
-  ok('假日加给 = 日薪 × 0.5 = 69,364', holPay.extra === 69364, kr(holPay.extra));
-  ok('假日出勤合计 = 138,728 × 1.5 = 208,092', holPay.total === 208092, kr(holPay.total));
+  // 2026-10-29 新规则：假日出勤 = 出勤 ×1.5 ＋ 假日本身 8h（유급휴일）
+  ok('假日加给 = 日薪 × 0.5 ＋ 假日 8h = 153,124', holPay.extra === 153124, kr(holPay.extra));
+  ok('假日出勤合计 = 138,728 × 1.5 ＋ 8h = 291,852', holPay.total === 291852, kr(holPay.total));
   // 清掉这一天的测试数据，避免污染第四章的当月实算
   await page.evaluate(() => { delete Store.attendance['2026-10-09']; Store.save(); });
 
@@ -142,7 +143,12 @@ const SEED = () => {
   const attTxt = await page.textContent('#sal-attendance');
   ok('考勤汇总显示 8 天出勤', /出勤天数\s*8일/.test(attTxt.replace(/\s+/g, ' ')), attTxt.replace(/\s+/g, ' ').slice(0, 60));
   const gross1 = await page.textContent('#sal-gross');
-  ok('应发为按 8 天实算值', gross1 === kr(1668274), `${gross1}（期望 ${kr(1668274)}）`);
+  // 2026-10-29 新规则：1,668,274 + 공휴일수당 3일（10-03 토 + 10-05 월 대체 + 10-09 금，3×83,760=251,280）
+  //                  + 주휴수당 1주（10-05~09 周：2 个法定假日视为出勤 + 3 天出勤，83,760）= 2,003,314
+  ok('应发为按 8 天实算值（含 공휴일수당 3일 + 주휴수당 1주）', gross1 === kr(2003314), `${gross1}（期望 ${kr(2003314)}）`);
+  const bd1 = await page.textContent('#sal-breakdown');
+  ok('应发明细含 공휴일수당 与 주휴수당 行', bd1.includes('공휴일수당') && bd1.includes('주휴수당'),
+    bd1.replace(/\s+/g, ' ').slice(0, 160));
 
   // 非固定值验证：再加一天出勤，应发必须跟着涨
   await page.evaluate(() => {
@@ -159,6 +165,41 @@ const SEED = () => {
   ok('应发随之增加 138,728（非固定值）',
     Number(gross2.replace(/,/g, '')) - Number(gross1.replace(/,/g, '')) === 138728,
     `${gross1} → ${gross2}`);
+
+  console.log('\n──── 四点五、주휴수당（周差）：一周满勤多给 8h ────');
+  // 注意：本测试把「今天」冻结在 10-15，只能操作 10-15 之前的日期。
+  // SEED 已使 10-05~09 那周成立（2 个法定假日视为出勤 + 06/07/08 出勤）→ 初始 1주
+  const wk0 = await page.evaluate(() => Salary.calcMonth(2026, 10, { mode: 'attendance' }).weeklyCount);
+  ok('10-05~09 周（假日 2 日 + 出勤 3 日）→ 주휴 1주', wk0 === 1, String(wk0));
+  const wkPay = await page.evaluate(() => Salary.calcMonth(2026, 10, { mode: 'attendance' }).weeklyPay);
+  ok('주휴수당 = 8h × 시급 = 83,760', wkPay === 83760, kr(wkPay));
+  const wk2 = await page.evaluate(() => {
+    delete Store.attendance['2026-10-06'];
+    Store.save();
+    return Salary.calcMonth(2026, 10, { mode: 'attendance' }).weeklyCount;
+  });
+  ok('该周缺勤一天 → 주휴作废（0주）', wk2 === 0, String(wk2));
+  const wk3 = await page.evaluate(() => {
+    const r = Store.day('2026-10-06');
+    r.shiftType = 'day';
+    r.leave = { type: '연차', note: '' };
+    Store.save();
+    return Salary.calcMonth(2026, 10, { mode: 'attendance' }).weeklyCount;
+  });
+  ok('연차 视为出勤 → 주휴恢复 1주', wk3 === 1, String(wk3));
+  const wk4 = await page.evaluate(() => {
+    const r = Store.day('2026-10-07');
+    r.shiftType = 'day';
+    r.leave = { type: '병가', note: '' };
+    Store.save();
+    return Salary.calcMonth(2026, 10, { mode: 'attendance' }).weeklyCount;
+  });
+  ok('병가 不算出勤 → 주휴作废', wk4 === 0, String(wk4));
+  await page.evaluate(() => {
+    delete Store.attendance['2026-10-06'];
+    delete Store.attendance['2026-10-07'];
+    Store.save();
+  });
 
   console.log('\n──── 五、前月用工资条固定值 ────');
   await page.click('#sal-prev-month'); await page.waitForTimeout(400);
@@ -195,9 +236,12 @@ const SEED = () => {
   ok('显示预计退职金', /퇴직금/.test(sevTxt), sevTxt.slice(0, 70));
   const sev = await page.evaluate(() => Salary.severance('2022/06/01', new Date('2026-10-15'), 3354050));
   ok('工龄满 4 年（2022/06/01 起）', sev.years === 4, `${sev.years}년 ${sev.months}개월 / ${sev.days}일`);
-  ok('1일 평균임금 = 月应发 ÷ 30', sev.dailyAvgWage === Math.round(3354050 / 30), kr(sev.dailyAvgWage));
+  ok('兼容旧签名：月应发 ×3 ÷ 90 ≈ ÷ 30', sev.dailyAvgWage === Math.round(3354050 / 30), kr(sev.dailyAvgWage));
   ok('退职金 = 日均 × 30 × 工龄年数',
     sev.amount === Math.round(sev.dailyAvgWage * 30 * (sev.days / 365)), kr(sev.amount));
+  // 2026-10-29 新口径：평균임금 = 最近 3 个月应发总额 ÷ 3 个月实际天数
+  const sev3 = await page.evaluate(() => Salary.severance('2022/06/01', new Date('2026-10-15'), { total: 10062150, days: 90 }));
+  ok('新口径：3 个月总额 10,062,150 ÷ 90 = 111,802', sev3.dailyAvgWage === 111802, kr(sev3.dailyAvgWage));
   const sevNew = await page.evaluate(() => Salary.severance('2026/09/01', new Date('2026-10-15'), 3354050));
   ok('未满 1 年不产生退职金', sevNew.amount === 0 && sevNew.eligible === false, sevNew.note);
 

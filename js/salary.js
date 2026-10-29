@@ -271,6 +271,18 @@ const Salary = (() => {
       };
     }
 
+    // ①-b 周六：无薪周休（2026-10-29 规则）——不上班 0원、不判旷工，日历显示「休」
+    //     上班的周六走 statusFromSegments，工资在 calcDayPay 里按全天 ×1.5 结
+    //     周六恰逢法定假日时走上面的假日分支（유급 8h，优先级更高）
+    const _dow = new Date(`${dateStr}T00:00:00`).getDay();
+    if (_dow === 6 && !(rec && rec.segments.length)) {
+      return {
+        ...base, code: 'rest', ...STATUS.rest,
+        label: '토요일 无薪周休', sym: '休',
+        isHoliday: !!holiday, holidayName: hi ? hi.name : ''
+      };
+    }
+
     // ② 请假：允许提前登记，所以同样优先于「未来」
     if (base.leave) {
       return { ...base, code: 'leave', ...STATUS.leave, label: `${base.leave.type} 请假` };
@@ -287,7 +299,10 @@ const Salary = (() => {
       return { ...base, code: 'absent', ...STATUS.absent };
     }
 
-    return { ...base, ...statusFromSegments(rec, dateStr, st, now, isToday), hasSeg: true, segCount: rec.segments.length };
+    const out = statusFromSegments(rec, dateStr, st, now, isToday);
+    // 周六上班：全天 ×1.5，状态行带上标记
+    if (_dow === 6) out.extra = out.extra ? `토요일 ×1.5 ${out.extra}` : '토요일 ×1.5';
+    return { ...base, ...out, hasSeg: true, segCount: rec.segments.length };
   }
 
   /** 从打卡段判定 缺卡/迟到/早退/正常（2026-10-28 起一次签到 = 整天出勤） */
@@ -363,10 +378,21 @@ const Salary = (() => {
       workHours: 0, otHours: 0, nightHours: 0, extraOtHours: 0,
       isNight: shiftType === 'night',
       isHoliday: !!hol, holidayName: hol ? hol.name : '',
+      isSaturday: new Date(`${dateStr}T00:00:00`).getDay() === 6,
       stdPay: 0, otPay: 0, nightPay: 0, extraOtPay: 0, holidayExtra: 0,
+      holidayPay: 0,
       leavePay: 0, leaveType: '', total: 0
     };
-    if (!rec) return zero;
+    // 法定假日基本工资：不上班也拿 8h × 시급（유급휴일）
+    // 周日（주휴일）除外：周日的钱由 주휴수당（周差）承担，避免重复计
+    const holidayFull = !!hol && !isWeeklyRest(dateStr, st);
+    if (!rec) {
+      if (holidayFull) {
+        const hp = KR(stdH * hourly);
+        return { ...zero, kind: 'holiday', paid: true, holidayPay: hp, total: hp };
+      }
+      return zero;
+    }
     if (rec.isRestDay) return { ...zero, kind: 'rest' };
 
     if (rec.leave) {
@@ -379,7 +405,13 @@ const Salary = (() => {
     }
 
     const r = calcDay(rec, dateStr, opts);
-    if (!r.segCount) return { ...zero, kind: 'none' };
+    if (!r.segCount) {
+      if (holidayFull) {
+        const hp = KR(stdH * hourly);
+        return { ...zero, kind: 'holiday', paid: true, holidayPay: hp, total: hp };
+      }
+      return { ...zero, kind: 'none' };
+    }
 
     const isNight = shiftType === 'night';
     const stdPay = KR(stdH * hourly);
@@ -389,7 +421,13 @@ const Salary = (() => {
     const extraOtPay = KR(extraH * hourly * otMul);
 
     const base = stdPay + otPay + nightPay + extraOtPay;
-    const holidayExtra = hol ? KR(base * (holMul - 1)) : 0;
+    // 出勤加给：
+    //   法定假日出勤 = 出勤部分 ×1.5 ＋ 假日本身 8h（韩国法定惯例，等效 20h）
+    //   周六（无薪周休日）出勤 = 全天 ×1.5，不加 8h
+    //   两者同倍率 holidayMultiplier（默认 1.5）
+    let holidayExtra = 0;
+    if (hol) holidayExtra = KR(base * (holMul - 1)) + KR(stdH * hourly);
+    else if (zero.isSaturday) holidayExtra = KR(base * (holMul - 1));
 
     return {
       ...zero, kind: 'work', paid: true, isNight,
@@ -431,7 +469,7 @@ const Salary = (() => {
   /* ============================================================
    * 退职金（퇴직금）
    *   法定：1일 평균임금 × 30일 × (재직일수 / 365)，需满 1 年
-   *   1일 평균임금 = 最近 3 个月工资总额 ÷ 最近 3 个月总天数
+   *   1일 평균임금 = 最近 3 个月应发总额 ÷ 3 个月实际天数（2026-10-29 口径）
    * ============================================================ */
   function parseHireDate(s) {
     if (!s) return null;
@@ -445,15 +483,24 @@ const Salary = (() => {
    * 计算工龄与预计退职金
    * @param {string} hireDateStr 'YYYY/MM/DD'
    * @param {Date} asOf
-   * @param {number} monthlyGross 月平均应发（用于折算日均工资）
+   * @param {{total:number, days:number}|number} last3
+   *   {total, days} = 最近 3 个月应发总额与实际天数（法定口径，推荐）
+   *   兼容旧用法：传数字 = 单月应发，按 3 个月 ≈ 90 天近似
    */
-  function severance(hireDateStr, asOf = new Date(), monthlyGross = 0) {
+  function severance(hireDateStr, asOf = new Date(), last3 = null) {
     const hire = parseHireDate(hireDateStr);
     const base = {
       ok: false, hireDate: hireDateStr || '', days: 0, years: 0, months: 0,
-      eligible: false, dailyAvgWage: 0, amount: 0, monthlyGross, note: ''
+      eligible: false, dailyAvgWage: 0, amount: 0, last3, note: ''
     };
     if (!hire) return { ...base, note: '未填写或无法解析入职日期' };
+
+    let total = 0, periodDays = 0;
+    if (typeof last3 === 'number') { total = last3 * 3; periodDays = 90; }
+    else if (last3 && typeof last3 === 'object') {
+      total = Number(last3.total) || 0;
+      periodDays = Number(last3.days) || 0;
+    }
 
     const MS_DAY = 86400000;
     const days = Math.floor((asOf.getTime() - hire.getTime()) / MS_DAY);
@@ -463,8 +510,8 @@ const Salary = (() => {
     const months = Math.floor((days % 365) / 30);
     const eligible = days >= 365;
 
-    // 1일 평균임금 ≈ 月平均应发 ÷ 当月天数（30 日基准，韩国实务常用）
-    const dailyAvgWage = monthlyGross > 0 ? KR(monthlyGross / 30) : 0;
+    // 1일 평균임금 = 最近 3 个月应发总额 ÷ 3 个月实际天数（法定口径）
+    const dailyAvgWage = periodDays > 0 && total > 0 ? KR(total / periodDays) : 0;
     const amount = eligible && dailyAvgWage > 0
       ? KR(dailyAvgWage * 30 * (days / 365))
       : 0;
@@ -562,8 +609,20 @@ const Salary = (() => {
 
     let workDays = 0, nightDays = 0, holidayWorkDays = 0, restDays = 0, leaveDays = 0, annualDays = 0, otDays = 0;
     let workHours = 0, otHours = 0, nightHours = 0, extraOtHours = 0;
-    const T = { std: 0, leave: 0, ot: 0, night: 0, extraOt: 0, holiday: 0 };
+    let holidayPayDays = 0, weeklyCount = 0;
+    const T = { std: 0, leave: 0, ot: 0, night: 0, extraOt: 0, holiday: 0, holidayPay: 0 };
     const dayList = [];
+
+    // ===== 주휴수당（周差）按周结算 =====
+    // 一周（周一~周五，周六是无薪周休不参与）出勤满 weeklyWorkDays 天 → 该周 +8h × 시급
+    // 出勤 = 实际打卡（含迟到早退）或 연차（带薪年假视为出勤）或法定假日（유급휴일）；
+    // 旷工 / 병가·경조사·기타 请假 / 手动标休 → 该周주휴作废；今天未到（pending/future）先不判死
+    const weekMonday = ds => {
+      const d = new Date(`${ds}T00:00:00`);
+      d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+      return isoDate(d);
+    };
+    const weeks = {};
 
     for (let d = 1; d <= daysInMonth; d++) {
       const ds = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -581,7 +640,23 @@ const Salary = (() => {
         || (!!(rec && rec.makeups && rec.makeups.length));
       if (meaningful) dayList.push({ dateStr: ds, rec, pay: p, rest: jd.code === 'rest' });
 
-      if (jd.code === 'rest') { restDays++; continue; }
+      // 주휴 出勤判定（周一~周五）——必须在 rest continue 之前：
+      // 法定假日 judgeDay 也是 rest，只有先判 주휴 才能把 유급휴일 记为出勤
+      const _dow = new Date(`${ds}T00:00:00`).getDay();
+      if (_dow >= 1 && _dow <= 5) {
+        const mon = weekMonday(ds);
+        const wk = weeks[mon] || (weeks[mon] = { attend: 0, bad: false });
+        if (['normal', 'late', 'early', 'lateearly', 'missing'].includes(jd.code)) wk.attend++;
+        else if (jd.code === 'leave' && rec && rec.leave && rec.leave.type === '연차') wk.attend++;
+        else if (jd.code === 'rest' && jd.isHoliday) wk.attend++;   // 法定假日=유급，视为出勤
+        else if (jd.code === 'future' || jd.code === 'pending') { /* 未到，先不判死 */ }
+        else wk.bad = true;   // 旷工 / 병가 등请假 / 手动标休
+      }
+      if (jd.code === 'rest') {
+        restDays++;
+        if (p.kind === 'holiday') { T.holidayPay += p.holidayPay; holidayPayDays++; }
+        continue;
+      }
       if (jd.code === 'leave') {
         leaveDays++;
         if (p.leavePay > 0) annualDays++;
@@ -601,12 +676,18 @@ const Salary = (() => {
       T.extraOt += p.extraOtPay; T.holiday += p.holidayExtra;
     }
 
+    // 该月成立的주휴周数
+    const weeklyWorkDays = Number(st.weeklyWorkDays) || 5;
+    weeklyCount = Object.values(weeks).filter(w => w.attend >= weeklyWorkDays && !w.bad).length;
+
     // ===== 应发构成 =====
     const stdPay = KR((T.std) * perf);
     const otPay = KR((T.ot + T.extraOt) * perf);
     const nightPay = KR(T.night * perf);
     const holPay = KR(T.holiday * perf);
     const leavePay = KR(T.leave * perf);
+    const holidayPayTotal = KR(T.holidayPay * perf);
+    const weeklyPay = KR(weeklyCount * stdH * hourly);
 
     // 实算模式下只保留「固定额 / 按日计发」两类津贴。
     // formulaWeekly / formulaOT / formulaBonus 属于工资条口径（주수、현장근로수당），
@@ -642,6 +723,10 @@ const Salary = (() => {
         formula: `${nightDays}일 × ${nightH}h × 시급 × ${nightRate}` },
       { id: 'hol', name: '휴일근로수당', nameCn: '节假日出勤加给', amount: holPay,
         formula: `${holidayWorkDays}일 × 全天 × ${holMul}` },
+      { id: 'holpay', name: '공휴일수당', nameCn: '法定假日工资', amount: holidayPayTotal,
+        formula: `${holidayPayDays}일 × ${stdH}h × 시급（不上班也有的 유급휴일）` },
+      { id: 'juhyu', name: '주휴수당', nameCn: '周差(주휴)', amount: weeklyPay,
+        formula: `${weeklyCount}주 × ${stdH}h × 시급（一周满勤多给一天）` },
       { id: 'annual', name: '유급연차', nameCn: '有薪年假', amount: leavePay,
         formula: `${annualDays}일 × ${stdH}h × 시급` }
     ].filter(it => it.amount > 0).concat(allowances);
@@ -664,6 +749,7 @@ const Salary = (() => {
       basePay: stdPay, stdHours: stdH, perf,
       workDays, restDays, leaveDays, annualDays,
       nightDays, holidayWorkDays, otDays,
+      holidayPayDays, holidayPayTotal, weeklyCount, weeklyPay,
       workHours: round2(workHours), otHours: round2(otHours),
       nightHours: round2(nightHours), extraOtHours: round2(extraOtHours),
       dayList,

@@ -71,16 +71,18 @@ const ok = (name, cond, extra = '') => { cond ? pass++ : fail++; console.log(`${
   //   기본급 8h × 12,000 = 96,000
   //   연장근로수당 3.5h × 12,000 × 1.5 = 63,000
   //   固定津贴 실액수당 366,450 + 직무개발비 192,000（备份未覆盖 allowances，沿用默认）
-  //   → 应发 717,450；保险基数 = 96,000 + 366,450 = 462,450；扣除 5% = 23,123 → 实发 694,327
+  //   공휴일수당 3일（10-03 토 개천절 + 10-05 월 대체 + 10-09 금 한글날，3×96,000 = 288,000；
+  //   10-04 일요일是 주휴일 不重复给）→ 应发 1,005,450
+  //   保险基数 = 96,000 + 366,450 = 462,450；扣除 5% = 23,123 → 实发 982,327
   await page.click('.tab[data-page="salary"]');
   await page.waitForTimeout(500);
   const num = s => Number(s.replace(/[^\d.]/g, ''));
   const gross = num(await page.textContent('#sal-gross'));
   const deduct = num(await page.textContent('#sal-deduct'));
   const net = num(await page.textContent('#sal-net'));
-  ok('导入考勤后应发=717,450', gross === 717450, '实际 ' + gross);
+  ok('导入考勤后应发=1,005,450（含 공휴일수당 3일）', gross === 1005450, '实际 ' + gross);
   ok('扣除=23,123（基数 462,450 × 5%）', deduct === 23123, '实际 ' + deduct);
-  ok('实发=694,327', net === 694327, '实际 ' + net);
+  ok('实发=982,327', net === 982327, '实际 ' + net);
   ok('应发−扣除=实发', gross - deduct === net, `${gross} − ${deduct} = ${net}`);
   const meta = await page.textContent('#sal-meta');
   ok('员工档案同步到月薪页', meta.includes('导入测试') && meta.includes('导入部门'),

@@ -150,8 +150,8 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
   ok('未来日期不可点击补签', (await page.$$(cellSel(20) + '.tappable')).length === 0);
   ok('未来日期不显示状态字', (await page.textContent(cellSel(20))).trim() === '20');
   const fut = await page.$$eval('.cal-cell.s-future', e => e.length);
-  // 10-16~10-31 共 16 天：减去周日 18/25 与手动休息日 16 → 13 格 future
-  ok('未来工作日为 future（16 天 − 2 个周日 − 1 个休息日）', fut === 13, `future ${fut} 格`);
+  // 10-16~10-31 共 16 天：减去周日 18/25、手动休息日 16、无薪周休周六 17/24/31 → 10 格 future
+  ok('未来工作日为 future（16 天 − 2 个周日 − 1 个休息日 − 3 个周六）', fut === 10, `future ${fut} 格`);
   ok('未来的周休日显示为休息', await code(18) === 'rest' && await code(25) === 'rest',
     `18→${await code(18)} 25→${await code(25)}`);
   ok('未来的普通工作日仍为 future', await code(21) === 'future', await code(21));

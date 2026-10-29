@@ -539,6 +539,8 @@
         : `<span class="tag ${isNight ? 'night' : 'day'}">${isNight ? '夜班' : '白班'}</span>`;
       const holTag = pay.isHoliday
         ? `<span class="tag holiday">${pay.holidayName || '공휴일'} ×1.5</span>` : '';
+      const satTag = (!pay.isHoliday && pay.isSaturday && pay.kind === 'work')
+        ? '<span class="tag holiday">토요일 ×1.5</span>' : '';
 
       let detail;
       if (rest || pay.kind === 'rest') detail = '休息不计薪';
@@ -552,7 +554,7 @@
       }
       return `<div class="att-item" data-date="${dateStr}">
         <div class="att-date"><b>${d.getDate()}</b><i>周${wk}</i></div>
-        <div class="att-info"><b>${times || '未签到'}${tag}${holTag}</b>
+        <div class="att-info"><b>${times || '未签到'}${tag}${holTag}${satTag}</b>
           <span>${detail}</span></div>
         <div class="att-money">${pay.total > 0 ? krN(pay.total) : '—'}</div>
       </div>`;
@@ -634,6 +636,8 @@
         ['야간근로일 夜班天数', `${sum.nightDays}일`],
         ['야간근로시간 夜班工时', `${sum.nightHours.toFixed(1)}h`],
         ['휴일근로 节假日出勤', `${sum.holidayWorkDays}일`],
+        ['공휴일수당 法定假日工资', `${sum.holidayPayDays || 0}일`],
+        ['주휴수당 周差', `${sum.weeklyCount || 0}회`],
         ['연차 有薪年假', `${sum.annualDays}일`],
         ['휴식·결근 休息/缺勤', `${sum.restDays}일`]
       );
@@ -646,14 +650,26 @@
     $('sal-attendance').innerHTML = attRows
       .map(([k, v]) => `<div class="rowline"><span>${k}</span><b>${v}</b></div>`).join('');
 
-    // 퇴직금（按入职日期推算）
-    const sev = Salary.severance(p.hireDate, now, sum.gross);
+    // 퇴직금（평균임금 = 最近 3 个完整月应发总额 ÷ 3 个月实际天数，法定口径）
+    let sevTotal = 0, sevDays = 0;
+    for (let i = 1; i <= 3; i++) {
+      const d0 = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const yy = d0.getFullYear(), mm = d0.getMonth() + 1;
+      const mk = `${yy}-${String(mm).padStart(2, '0')}`;
+      const slip = Store.getPayslip(mk);
+      const g = slip ? Number(slip.gross) || 0
+        : Salary.calcMonth(yy, mm, { mode: 'slip' }).gross;
+      sevTotal += g;
+      sevDays += new Date(yy, mm, 0).getDate();
+    }
+    const sev = Salary.severance(p.hireDate, now, { total: sevTotal, days: sevDays });
     $('sal-severance').innerHTML = sev.ok
       ? `<div class="rowline"><span>근속기간 工龄</span><b>${sev.note}</b></div>
+         <div class="rowline"><span>최근 3개월 最近 3 个月应发</span><b>${kr(sevTotal)}원 / ${sevDays}일</b></div>
          <div class="rowline"><span>1일 평균임금 日均工资</span><b>${kr(sev.dailyAvgWage)}원</b></div>
          <div class="rowline total"><span>예상 퇴직금 预计退职金</span><b>${sev.eligible ? kr(sev.amount) + '원' : '—'}</b></div>
          <div class="hint">${sev.eligible
-          ? '法定口径：1일 평균임금 × 30일 × 재직일수 ÷ 365。实际金额以公司结算为准。'
+          ? '法定口径：1일 평균임금（最近 3 个月应发 ÷ 实际天数）× 30일 × 재직일수 ÷ 365。实际金额以公司结算为准。'
           : '需在司满 1 年（365 日）才产生法定退职金。'}</div>`
       : `<div class="hint">${sev.note}。请到【设置 → 직원档案】填写 입사일 入职日期。</div>`;
 
