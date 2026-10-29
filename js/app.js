@@ -544,7 +544,9 @@
 
       let detail;
       if (rest || pay.kind === 'rest') detail = '休息不计薪';
-      else if (pay.kind === 'leave') detail = pay.paid ? `연차 有薪年假 ${krN(pay.total)}원` : `${pay.leaveType || '请假'} 不计薪`;
+      else if (pay.kind === 'leave') detail = pay.paid
+        ? `${pay.leaveType === '회사지정' ? '회사지정휴일 会社指定放假' : '연차 有薪年假'} ${krN(pay.total)}원`
+        : `${pay.leaveType || '请假'} 不计薪`;
       else if (pay.kind === 'none') detail = '未打卡';
       else {
         const parts = [`工时 ${pay.workHours.toFixed(1)}h`, `加班 ${Math.max(pay.otHours, 0).toFixed(1)}h`];

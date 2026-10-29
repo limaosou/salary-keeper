@@ -201,6 +201,69 @@ const SEED = () => {
     Store.save();
   });
 
+  console.log('\n──── 四点六、회사지정휴일（会社指定放假）+ 跨月周 주휴 ────');
+  // 老爷 2026-10-29 规则：会社指定放假用연차替代 → 当天有 8h 工资、주휴照给。
+  // 10-01(목)/10-02(금) 会社指定放假，上周 9/28~30 正常出勤 → 跨月周（9/28~10/4）
+  // 必须补判 9 月三天才能凑满 5 天（주휴归「周日所在月」= 10 月）。
+  const cs = await page.evaluate(() => {
+    const dayMs = d => new Date(`${d}T00:00:00`).getTime();
+    const hm = t => { const [h, m] = t.split(':').map(Number); return h * 3600000 + m * 60000; };
+    // 上周一~三正常出勤
+    ['2026-09-28', '2026-09-29', '2026-09-30'].forEach(d => {
+      const r = Store.day(d);
+      r.shiftType = 'day';
+      r.segments = [{ in: new Date(dayMs(d) + hm('08:20')).toISOString(), out: new Date(dayMs(d) + hm('20:20')).toISOString() }];
+      r.restMinutes = 30;
+    });
+    // 10-01/10-02 会社指定放假（清掉 SEED 的打卡记录）
+    ['2026-10-01', '2026-10-02'].forEach(d => {
+      delete Store.attendance[d];
+      Store.setLeave(d, { type: '회사지정', note: '' });
+    });
+    Store.save();
+    const s = Salary.calcMonth(2026, 10, { mode: 'attendance' });
+    return {
+      pay1: Salary.calcDayPay('2026-10-01'),
+      pay2: Salary.calcDayPay('2026-10-02'),
+      weeklyCount: s.weeklyCount, weeklyPay: s.weeklyPay,
+      leavePay: (s.grossItems.find(i => i.id === 'annual') || {}).amount || 0
+    };
+  });
+  ok('10-01 회사지정휴일 = 8h × 시급 = 83,760', cs.pay1.total === 83760, kr(cs.pay1.total));
+  ok('10-02 同样 83,760（两天每天都有 8h 工资）', cs.pay2.total === 83760, kr(cs.pay2.total));
+  ok('跨月周 9/28~10/4（出勤 3 + 회사지정 2）→ 주휴 1주', cs.weeklyCount === 1, String(cs.weeklyCount));
+  ok('주휴수당 = 83,760', cs.weeklyPay === 83760, kr(cs.weeklyPay));
+  ok('유급휴가合计 = 2일 × 83,760 = 167,520', cs.leavePay === 167520, kr(cs.leavePay));
+  // 换成 연차 登记也应同样成立
+  const cs2 = await page.evaluate(() => {
+    Store.setLeave('2026-10-01', { type: '연차', note: '' });
+    Store.setLeave('2026-10-02', { type: '연차', note: '' });
+    Store.save();
+    return Salary.calcMonth(2026, 10, { mode: 'attendance' }).weeklyCount;
+  });
+  ok('연차替代登记 → 주휴同样 1주', cs2 === 1, String(cs2));
+  // 回归：不登记则这两天是旷工 → 周差作废
+  const cs3 = await page.evaluate(() => {
+    ['2026-10-01', '2026-10-02'].forEach(d => { delete Store.attendance[d].leave; });
+    Store.save();
+    return Salary.calcMonth(2026, 10, { mode: 'attendance' }).weeklyCount;
+  });
+  ok('放假不登记（旷工）→ 주휴作废 0주', cs3 === 0, String(cs3));
+  // 还原 SEED：10-01/10-02 恢复打卡记录，删除 9 月三天
+  await page.evaluate(() => {
+    const dayMs = d => new Date(`${d}T00:00:00`).getTime();
+    const hm = t => { const [h, m] = t.split(':').map(Number); return h * 3600000 + m * 60000; };
+    ['2026-10-01', '2026-10-02'].forEach(d => {
+      Store.attendance[d] = {
+        shiftType: 'day',
+        segments: [{ in: new Date(dayMs(d) + hm('08:20')).toISOString(), out: new Date(dayMs(d) + hm('20:20')).toISOString() }],
+        restMinutes: 30, perf: 1, isRestDay: false, leave: null, makeups: []
+      };
+    });
+    ['2026-09-28', '2026-09-29', '2026-09-30'].forEach(d => { delete Store.attendance[d]; });
+    Store.save();
+  });
+
   console.log('\n──── 五、前月用工资条固定值 ────');
   await page.click('#sal-prev-month'); await page.waitForTimeout(400);
   ok('切到 2026-09', (await page.textContent('#sal-cur-month')) === '2026-09');

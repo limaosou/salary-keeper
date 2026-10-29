@@ -285,7 +285,9 @@ const Salary = (() => {
 
     // ② 请假：允许提前登记，所以同样优先于「未来」
     if (base.leave) {
-      return { ...base, code: 'leave', ...STATUS.leave, label: `${base.leave.type} 请假` };
+      const lv = base.leave.type || '기타';
+      const lb = lv === '회사지정' ? '회사지정휴일 会社指定放假' : `${lv} 请假`;
+      return { ...base, code: 'leave', ...STATUS.leave, label: lb };
     }
 
     // ③ 未来日期：未到，不判定、不计缺勤
@@ -397,7 +399,9 @@ const Salary = (() => {
 
     if (rec.leave) {
       const t = rec.leave.type || '기타';
-      if (dp.annualLeavePaid !== false && t === '연차') {
+      // 회사지정휴일：会社指定放假（연차替代），法定带薪，固定 8h × 시급，
+      // 不受「연차是否带薪」开关影响；주휴周内视为出勤（见 judgeWeeklyDay）
+      if (t === '회사지정' || (dp.annualLeavePaid !== false && t === '연차')) {
         const p = KR(stdH * hourly);
         return { ...zero, kind: 'leave', paid: true, leaveType: t, leavePay: p, total: p };
       }
@@ -615,14 +619,28 @@ const Salary = (() => {
 
     // ===== 주휴수당（周差）按周结算 =====
     // 一周（周一~周五，周六是无薪周休不参与）出勤满 weeklyWorkDays 天 → 该周 +8h × 시급
-    // 出勤 = 实际打卡（含迟到早退）或 연차（带薪年假视为出勤）或法定假日（유급휴일）；
+    // 出勤 = 实际打卡（含迟到早退）或 연차 / 회사지정휴일（会社指定放假，연차替代，
+    // 均为带薪休假视为出勤）或法定假日（유급휴일）；
     // 旷工 / 병가·경조사·기타 请假 / 手动标休 → 该周주휴作废；今天未到（pending/future）先不判死
+    // 跨月周归属：주휴归「周日所在月」。月初补判 1 号之前同周的周一~周五（见循环后）
     const weekMonday = ds => {
       const d = new Date(`${ds}T00:00:00`);
       d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
       return isoDate(d);
     };
     const weeks = {};
+    const judgeWeeklyDay = (ds, jd, rec) => {
+      const _dow = new Date(`${ds}T00:00:00`).getDay();
+      if (_dow < 1 || _dow > 5) return;
+      const mon = weekMonday(ds);
+      const wk = weeks[mon] || (weeks[mon] = { attend: 0, bad: false });
+      if (['normal', 'late', 'early', 'lateearly', 'missing'].includes(jd.code)) wk.attend++;
+      else if (jd.code === 'leave' && rec && rec.leave
+        && (rec.leave.type === '연차' || rec.leave.type === '회사지정')) wk.attend++;
+      else if (jd.code === 'rest' && jd.isHoliday) wk.attend++;   // 法定假日=유급，视为出勤
+      else if (jd.code === 'future' || jd.code === 'pending') { /* 未到，先不判死 */ }
+      else wk.bad = true;   // 旷工 / 병가 등请假 / 手动标休
+    };
 
     for (let d = 1; d <= daysInMonth; d++) {
       const ds = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -642,16 +660,7 @@ const Salary = (() => {
 
       // 주휴 出勤判定（周一~周五）——必须在 rest continue 之前：
       // 法定假日 judgeDay 也是 rest，只有先判 주휴 才能把 유급휴일 记为出勤
-      const _dow = new Date(`${ds}T00:00:00`).getDay();
-      if (_dow >= 1 && _dow <= 5) {
-        const mon = weekMonday(ds);
-        const wk = weeks[mon] || (weeks[mon] = { attend: 0, bad: false });
-        if (['normal', 'late', 'early', 'lateearly', 'missing'].includes(jd.code)) wk.attend++;
-        else if (jd.code === 'leave' && rec && rec.leave && rec.leave.type === '연차') wk.attend++;
-        else if (jd.code === 'rest' && jd.isHoliday) wk.attend++;   // 法定假日=유급，视为出勤
-        else if (jd.code === 'future' || jd.code === 'pending') { /* 未到，先不判死 */ }
-        else wk.bad = true;   // 旷工 / 병가 등请假 / 手动标休
-      }
+      judgeWeeklyDay(ds, jd, rec);
       if (jd.code === 'rest') {
         restDays++;
         if (p.kind === 'holiday') { T.holidayPay += p.holidayPay; holidayPayDays++; }
@@ -674,6 +683,16 @@ const Salary = (() => {
       }
       T.std += p.stdPay; T.ot += p.otPay; T.night += p.nightPay;
       T.extraOt += p.extraOtPay; T.holiday += p.holidayExtra;
+    }
+
+    // 跨月周补判：本月 1 号之前、同一周内的周一~周五（例：10-01 是周四 → 补判 9/28~9/30）。
+    // 这几天在主循环里摸不到，不补判的话「跨月周」永远凑不满 weeklyWorkDays 天，
+    // 会社指定放假（연차替代）+ 上周三天出勤的场景 주휴 就发不出来。
+    const firstDs = `${year}-${String(month).padStart(2, '0')}-01`;
+    const firstMon = weekMonday(firstDs);
+    for (let t = new Date(`${firstMon}T00:00:00`); t < new Date(`${firstDs}T00:00:00`); t.setDate(t.getDate() + 1)) {
+      const ds = isoDate(t);
+      judgeWeeklyDay(ds, judgeDay(ds, { now }), Store.peek(ds));
     }
 
     // 该月成立的주휴周数
