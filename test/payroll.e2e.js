@@ -98,6 +98,29 @@ const SEED = () => {
   ok('每周上班 5 天', win.weekly === 5, String(win.weekly));
   ok('每日休息扣除 30 分钟', win.rest === 30, `${win.rest} 分`);
 
+  // 周一白班 / 周五夜班的「少 2 小时」必须落到计发额度（2026-11-05 后 calcDayPay 固定额度曾忽略此规则）
+  const shortRule = await page.evaluate(() => {
+    const dayMs = d => new Date(`${d}T00:00:00`).getTime();
+    const mk = (d, type) => { const r = Store.day(d); r.shiftType = type; r.segments = [{ in: new Date(dayMs(d) + 8 * 3600000 + 20 * 60000).toISOString(), out: null }]; };
+    mk('2026-11-09', 'day');   // 周一白班（晚 2 小时上班）
+    mk('2026-11-10', 'day');   // 周二白班（基准）
+    mk('2026-11-13', 'night'); // 周五夜班（早 2 小时下班）
+    mk('2026-11-11', 'night'); // 周三夜班（基准）
+    const r = {
+      monQ: Salary.calcDayPay('2026-11-09').quotaHours, tueQ: Salary.calcDayPay('2026-11-10').quotaHours,
+      monT: Salary.calcDayPay('2026-11-09').total, tueT: Salary.calcDayPay('2026-11-10').total,
+      friQ: Salary.calcDayPay('2026-11-13').quotaHours, wedQ: Salary.calcDayPay('2026-11-11').quotaHours,
+      friT: Salary.calcDayPay('2026-11-13').total, wedT: Salary.calcDayPay('2026-11-11').total
+    };
+    ['2026-11-09', '2026-11-10', '2026-11-13', '2026-11-11'].forEach(d => delete Store.attendance[d]);
+    Store.save();
+    return r;
+  });
+  ok('周一白班计发小时 = 11.34 − 2 = 9.34', Math.abs(shortRule.monQ - 9.34) < 0.001, shortRule.monQ);
+  ok('周五夜班计发小时 = 11.42 − 2 = 9.42', Math.abs(shortRule.friQ - 9.42) < 0.001, shortRule.friQ);
+  ok('周一白班金额 < 普通白班（少 2h 的 1.5× 部分）', shortRule.monT < shortRule.tueT, `${shortRule.monT} < ${shortRule.tueT}`);
+  ok('周五夜班金额 < 普通夜班', shortRule.friT < shortRule.wedT, `${shortRule.friT} < ${shortRule.wedT}`);
+
   console.log('\n──── 二、日薪结构：标准 8h + 固定加班 3.5h(×1.5) ────');
   const dayPay = await page.evaluate(() => {
     const r = Store.day('2026-11-03');   // 周二，非假日
@@ -198,10 +221,10 @@ const SEED = () => {
   const attTxt = await page.textContent('#sal-attendance');
   ok('考勤汇总显示 8 天出勤', /出勤天数\s*8일/.test(attTxt.replace(/\s+/g, ' ')), attTxt.replace(/\s+/g, ' ').slice(0, 60));
   const gross1 = await page.textContent('#sal-gross');
-  // 2026-11-05 新日薪口径：8 天白班各降 2,513원（138,728 → 136,215）
-  //   → 2,003,314 − 8×2,513 = 1,983,210；再扣掉 10-03 개천절(토) 不再单独发 유급휴일（무급주휴，付费日落到 10-05 대체공휴일）
-  //   → 1,983,210 − 83,760 = 1,899,450（공휴일수당 2일 + 주휴수당 1주）
-  ok('应发为按 8 天实算值（含 공휴일수당 2일 + 주휴수당 1주）', gross1 === kr(1899450), `${gross1}（期望 ${kr(1899450)}）`);
+  // 2026-11-05 新日薪口径：8 天白班各 136,215；其中 10-12 是周一白班（晚 2h 上班）→ 整班少 2h（−31,410）
+  //   → 1,899,450 − 31,410 = 1,868,040；再叠加 공휴일수당 2일 + 주휴수당 1주（已含在口径内）。
+  //   注：1,899,450 是「忽略周一短班」的旧值，本断言已随 2026-11-05 后 calcDayPay 补回周一/周五规则而下调。
+  ok('应发为按 8 天实算值（10-12 周一白班已扣 2h，含 공휴일수당 2일 + 주휴수당 1주）', gross1 === kr(1868040), `${gross1}（期望 ${kr(1868040)}）`);
   const bd1 = await page.textContent('#sal-breakdown');
   ok('应发明细含 공휴일수당 与 주휴수당 行', bd1.includes('공휴일수당') && bd1.includes('주휴수당'),
     bd1.replace(/\s+/g, ' ').slice(0, 160));

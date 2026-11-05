@@ -434,9 +434,25 @@ const Salary = (() => {
     //   → 白 11.34h / 夜 11.42h。不再用班次 11.5h 当额度、不再补差。
     // 总额一次性取整再倒挤加班行，避免三项各自四舍五入差 1원。
     const devH = isNight ? devNightH : devDayH;
-    const quota = stdH + otH + devH;                 // 计发小时（白 11.34 / 夜 11.42）
-    const variablePay = KR((otH + devH) * hourly * otMul);
-    const devPay = KR(devH * hourly * otMul);
+    // 白班周一晚 2 小时上班 / 夜班周五早 2 小时下班（设置 monLateStart / friEarlyEnd）：
+    //   整班比正常少 2h，从 연장(1.5×) 部分扣减，기본 8h 不动；与 shiftWindowFor 的窗口一致。
+    //   2026-11-05 后 calcDayPay 改用固定额度，曾漏掉这条规则，导致考勤按整天满额算 —— 此处补回。
+    const sh = st.shift || {};
+    const _wd = new Date(`${dateStr}T00:00:00`).getDay();
+    const fiveDays = (Number(sh.weeklyWorkDays) || 5) >= 5;
+    let effOtH = otH, effDevH = devH;
+    if (fiveDays) {
+      const shortDay = (!isNight && sh.monLateStart && _wd === 1 && sh.monDayStart)
+        || (isNight && sh.friEarlyEnd && _wd === 5 && sh.friNightEnd);
+      if (shortDay) {
+        let cut = 2;
+        if (effOtH >= cut) effOtH -= cut;
+        else { cut -= effOtH; effOtH = 0; effDevH = Math.max(0, effDevH - cut); }
+      }
+    }
+    const quota = stdH + effOtH + effDevH;            // 计发小时（白 11.34 / 夜 11.42，短班 −2h）
+    const variablePay = KR((effOtH + effDevH) * hourly * otMul);
+    const devPay = KR(effDevH * hourly * otMul);
     const otPay = Math.max(0, variablePay - devPay);
     const nightPay = isNight ? KR(nightH * hourly * nightRate) : 0;
 
@@ -462,7 +478,7 @@ const Salary = (() => {
       ...zero, kind: 'work', paid: true, isNight,
       workHours: r.workHours, otHours: r.otHours, nightHours: r.nightHours,
       extraOtHours: addH,
-      quotaHours: quota, otHoursPaid: otH, devHours: devH, fillHours: 0,
+      quotaHours: quota, otHoursPaid: effOtH, devHours: effDevH, fillHours: 0,
       deductHours: deductH, addHours: addH,
       stdPay, otPay, devPay, nightPay, extraOtPay, deductPay, holidayExtra,
       total: base + holidayExtra
