@@ -180,6 +180,15 @@ const SEED = () => {
   // 清掉这一天的测试数据，避免污染第四章的当月实算
   await page.evaluate(() => { delete Store.attendance['2026-10-09']; Store.save(); });
 
+  // 2026-11-05 修复：周六法定假日（무급주휴）不单独发 유급휴일 8h，避免与 대체공휴일 重复计
+  const satHol = await page.evaluate(() => {
+    const a = Salary.calcDayPay('2026-10-03');   // 개천절 周六
+    const b = Salary.calcDayPay('2026-10-05');   // 대체공휴일 周一
+    return { satKind: a.kind, satPay: a.holidayPay, monPay: b.holidayPay };
+  });
+  ok('10-03 개천절(토) 不单独发 유급휴일（무급주휴）', satHol.satKind === 'none' && satHol.satPay === 0, JSON.stringify(satHol));
+  ok('10-05 대체공휴일(월) 仍正常发 유급휴일', satHol.monPay > 0, JSON.stringify(satHol));
+
   console.log('\n──── 四、月薪页：当月按考勤实算（非固定值） ────');
   await page.click('.tab[data-page="salary"]');
   await page.waitForTimeout(500);
@@ -190,8 +199,9 @@ const SEED = () => {
   ok('考勤汇总显示 8 天出勤', /出勤天数\s*8일/.test(attTxt.replace(/\s+/g, ' ')), attTxt.replace(/\s+/g, ' ').slice(0, 60));
   const gross1 = await page.textContent('#sal-gross');
   // 2026-11-05 新日薪口径：8 天白班各降 2,513원（138,728 → 136,215）
-  //   → 2,003,314 − 8×2,513 = 1,983,210（공휴일수당 3일 + 주휴수당 1주 不变）
-  ok('应发为按 8 天实算值（含 공휴일수당 3일 + 주휴수당 1주）', gross1 === kr(1983210), `${gross1}（期望 ${kr(1983210)}）`);
+  //   → 2,003,314 − 8×2,513 = 1,983,210；再扣掉 10-03 개천절(토) 不再单独发 유급휴일（무급주휴，付费日落到 10-05 대체공휴일）
+  //   → 1,983,210 − 83,760 = 1,899,450（공휴일수당 2일 + 주휴수당 1주）
+  ok('应发为按 8 天实算值（含 공휴일수당 2일 + 주휴수당 1주）', gross1 === kr(1899450), `${gross1}（期望 ${kr(1899450)}）`);
   const bd1 = await page.textContent('#sal-breakdown');
   ok('应发明细含 공휴일수당 与 주휴수당 行', bd1.includes('공휴일수당') && bd1.includes('주휴수당'),
     bd1.replace(/\s+/g, ' ').slice(0, 160));

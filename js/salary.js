@@ -393,8 +393,12 @@ const Salary = (() => {
       leavePay: 0, leaveType: '', total: 0
     };
     // 法定假日基本工资：不上班也拿 8h × 시급（유급휴일）
-    // 周日（주휴일）除外：周日的钱由 주휴수당（周差）承担，避免重复计
-    const holidayFull = !!hol && !isWeeklyRest(dateStr, st);
+    // 周日（주휴일）/ 周六（무급주휴 无薪周休）除外：这两天的钱由 주휴수당（周差）
+    //   或 대체공휴일（次一工作日）承担，避免「假日落在周六 → 周六发 8h ＋ 周一替假日再发 8h」重复计。
+    //   注意：周六无薪周休是 judgeDay 硬编码的规则（无打卡的周六一律判无薪休息），
+    //   这里让 유급휴일 口径与它对齐；若用户在周六假日当天出勤，走 work 路径按 ×1.5 结（不受影响）。
+    const dow6 = new Date(`${dateStr}T00:00:00`).getDay() === 6;
+    const holidayFull = !!hol && !isWeeklyRest(dateStr, st) && !dow6;
     if (!rec) {
       if (holidayFull) {
         const hp = KR(stdH * hourly);
