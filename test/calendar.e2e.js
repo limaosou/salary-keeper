@@ -306,7 +306,9 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
   ok('班次：每周上班 5 天', (await page.inputValue('#set-weekly-work-days')) === '5');
   ok('休息扣除为 30 分钟', (await page.inputValue('#set-rest-minutes')) === '30');
   ok('日薪：标准 8 小时', (await page.inputValue('#set-std-hours')) === '8');
-  ok('日薪：固定加班 3.5 小时', (await page.inputValue('#set-fixed-ot')) === '3.5');
+  ok('日薪：연장 加班 2.67 小时', (await page.inputValue('#set-fixed-ot')) === '2.67');
+  ok('日薪：개발지원 白班 0.67 小时', (await page.inputValue('#set-dev-day')) === '0.67');
+  ok('日薪：개발지원 夜班 0.75 小时', (await page.inputValue('#set-dev-night')) === '0.75');
   ok('日薪：夜班补助 3.5 小时', (await page.inputValue('#set-night-allow-h')) === '3.5');
   ok('日薪：节假日倍率 1.5', (await page.inputValue('#set-holiday-mul')) === '1.5');
   ok('假日来源默认内置表', (await page.inputValue('#set-holiday-source')) === 'builtin');

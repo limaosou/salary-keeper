@@ -86,7 +86,10 @@ const Store = (() => {
       // ===== 日薪结构：标准 8h + 固定加班 3.5h(×1.5)；夜班再加 3.5h 夜班补助 =====
       dailyPay: {
         stdHours: 8,             // 기준근로 标准工时
-        fixedOtHours: 3.5,       // 고정연장근로 每日固定加班
+        fixedOtHours: 3.5,       // 整班中「8h 以外」的总额度（兼容旧数据，勿删）
+        otHours: 2.67,           // 연장근로 加班（小时）
+        devDayHours: 0.67,       // 개발지원 开发支援·白班（小时）
+        devNightHours: 0.75,     // 개발지원 开发支援·夜班（小时）
         nightAllowHours: 3.5,    // 야간수당 지급시간 夜班补助计发小时
         nightAllowRate: 0.5,     // 야간수당 가산율（韩国法定 +50%）
         holidayMultiplier: 1.5,  // 휴일근로 节假日出勤全天倍率

@@ -113,11 +113,29 @@ const SEED = () => {
   const H = 10470;
   ok('白班工时 = 12h − 0.5h 休息 = 11.5h', Math.abs(dayPay.a.workHours - 11.5) < 0.01, dayPay.a.workHours.toFixed(2));
   ok('白班标准工资 = 8h × 10,470 = 83,760', dayPay.a.stdPay === 8 * H, kr(dayPay.a.stdPay));
-  ok('白班固定加班 = 3.5h × 10,470 × 1.5 = 54,968', dayPay.a.otPay === 54968, kr(dayPay.a.otPay));
+  // 2026-11-05 日薪拆分：기본 8h / 연장 2.67h / 개발지원 白0.67h·夜0.75h，
+  // 差额（白 0.16h、夜 0.08h）按 1.5 倍补进加班费；拆分前后总额必须分毫不差
+  ok('白班 개발지원 = 0.67h × 10,470 × 1.5 = 10,522', dayPay.a.devPay === 10522, kr(dayPay.a.devPay));
+  ok('白班加班（含补差）= 54,968 − 10,522 = 44,446', dayPay.a.otPay === 44446, kr(dayPay.a.otPay));
+  ok('加班＋开发支援 = 原固定加班 54,968（金额等价）',
+    dayPay.a.otPay + dayPay.a.devPay === 54968, kr(dayPay.a.otPay + dayPay.a.devPay));
+  ok('白班开发支援 0.67h / 补差 0.16h',
+    Math.abs(dayPay.a.devHours - 0.67) < 0.001 && Math.abs(dayPay.a.fillHours - 0.16) < 0.001,
+    `${dayPay.a.devHours.toFixed(2)}h + ${dayPay.a.fillHours.toFixed(2)}h`);
+  ok('夜班 개발지원 = 0.75h × 10,470 × 1.5 = 11,779', dayPay.b.devPay === 11779, kr(dayPay.b.devPay));
+  ok('夜班开发支援 0.75h / 补差 0.08h',
+    Math.abs(dayPay.b.devHours - 0.75) < 0.001 && Math.abs(dayPay.b.fillHours - 0.08) < 0.001,
+    `${dayPay.b.devHours.toFixed(2)}h + ${dayPay.b.fillHours.toFixed(2)}h`);
   ok('白班合计 138,728', dayPay.a.total === 138728, kr(dayPay.a.total));
   ok('夜班补助 = 3.5h × 10,470 × 0.5 = 18,323', dayPay.b.nightPay === 18323, kr(dayPay.b.nightPay));
   ok('夜班合计 = 白班 + 夜班补助 = 157,051', dayPay.b.total === 138728 + 18323, kr(dayPay.b.total));
   ok('夜班比白班多 18,323원', dayPay.b.total - dayPay.a.total === 18323, kr(dayPay.b.total - dayPay.a.total));
+  const devRow = await page.evaluate(() => {
+    const s = Salary.calcMonth(2026, 10, { mode: 'attendance' });
+    return { row: s.grossItems.find(i => i.id === 'dev'), ot: s.otPay, dev: s.devPay };
+  });
+  ok('月薪应发明细新增「개발지원수당」行', !!devRow.row && devRow.row.amount > 0, JSON.stringify(devRow.row || {}));
+  ok('月薪加班＋开发支援 = 拆分前固定加班口径', devRow.ot + devRow.dev > 0, `${kr(devRow.ot)} + ${kr(devRow.dev)}`);
 
   console.log('\n──── 三、法定节假日出勤全天 1.5 倍 ────');
   const holPay = await page.evaluate(() => {

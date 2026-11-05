@@ -66,7 +66,8 @@
     <div class="card">
       <div class="card-title">今日明细（日薪结构）</div>
       <div class="rowline"><span>기본급 标准工资（8h）</span><b id="d-base">0</b></div>
-      <div class="rowline"><span>연장근로수당 固定加班（<i id="d-ot-rate">1.5</i> 倍）</span><b id="d-ot">0</b></div>
+      <div class="rowline"><span>연장근로수당 加班（<i id="d-ot-rate">1.5</i> 倍）</span><b id="d-ot">0</b></div>
+      <div class="rowline"><span>개발지원수당 开发支援</span><b id="d-dev">0</b></div>
       <div class="rowline"><span>야간근로수당 夜班补助</span><b id="d-night">—</b></div>
       <div class="rowline" hidden><span>휴일근로수당 节假日加给</span><b id="d-holiday">0</b></div>
       <div class="rowline total"><span>当日合计</span><b id="d-total">0</b></div>
@@ -332,7 +333,9 @@
     <div class="card">
       <div class="card-title">일급구조 · 日薪结构</div>
       <div class="field"><label>기준근로 标准工时（小时）</label><input type="number" id="set-std-hours" step="0.5"></div>
-      <div class="field"><label>고정연장근로 每日固定加班（小时）</label><input type="number" id="set-fixed-ot" step="0.5"></div>
+      <div class="field"><label>연장근로 加班（小时）</label><input type="number" id="set-fixed-ot" step="0.01"></div>
+      <div class="field"><label>개발지원 开发支援·白班（小时）</label><input type="number" id="set-dev-day" step="0.01"></div>
+      <div class="field"><label>개발지원 开发支援·夜班（小时）</label><input type="number" id="set-dev-night" step="0.01"></div>
       <div class="field"><label>야간수당 지급시간 夜班补助小时</label><input type="number" id="set-night-allow-h" step="0.5"></div>
       <div class="field"><label>야간수당 가산율 夜班补助倍率</label><input type="number" id="set-night-allow-rate" step="0.1"></div>
       <div class="field"><label>휴일근로 배율 节假日出勤倍率</label><input type="number" id="set-holiday-mul" step="0.1"></div>
@@ -342,8 +345,10 @@
         <em class="switch"></em>
       </label>
       <div class="hint">
-        白班日薪 = 标准 8h × 시급 ＋ 固定加班 3.5h × 시급 × 1.5；夜班再加 3.5h × 시급 × 0.5 夜班补助。
-        实际工时超出「标准 + 固定加班」的部分仍按加班倍率计；法定节假日出勤当日合计再乘 1.5。
+        白班日薪 = 기본 8h ＋ 연장 2.67h ＋ 개발지원 0.67h（三项中后两项按加班倍率计）；
+        夜班的开发支援为 0.75h，再加 3.5h × 시급 × 0.5 夜班补助。
+        整班 11.5h 与三项合计的差额（白 0.16h、夜 0.08h）按加班倍率补进加班费，
+        所以拆分前后日薪金额完全一致；超出整班的部分（登记「增加时间」）仍按加班倍率另计。
       </div>
     </div>
 
