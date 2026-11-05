@@ -351,6 +351,51 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
   ok('还原后 10-09 重新标为假日', (await page.$$(cellSel(9) + '.s-holiday')).length === 1);
   ok('还原后 06 号回到正常', await code(6) === 'normal', `实际 ${await code(6)}`);
 
+  console.log('\n──── 九、考勤页计发小时口径（与今日页同源）────');
+  const chText = d => page.$eval(`#cal-grid .cal-cell[data-date="${d}"] .ch`, e => e.textContent.trim()).catch(() => '(无)');
+  const h6 = await chText('2026-10-06');
+  ok('月历格子显示计发 11.3h（不再是在岗 11.5h）', h6 === '11.3h', h6);
+  ok('引擎单日计发 = 11.34h', await page.evaluate(() =>
+    Math.abs(Salary.paidHoursFor('2026-10-06').total - 11.34) < 0.001));
+  const h7want = await page.evaluate(() => Salary.paidHoursFor('2026-10-07').total.toFixed(1) + 'h');
+  const h7 = await chText('2026-10-07');
+  ok('登记迟到 70 分的格子按计发扣减显示', h7 === h7want, `${h7} / 期望 ${h7want}`);
+
+  await page.click('#cal-grid .cal-cell[data-date="2026-10-06"]');
+  await page.waitForTimeout(250);
+  const mdt = (await page.textContent('#mk-detail')).replace(/\s+/g, ' ');
+  ok('补签明细显示「计发工时 11.34h」', mdt.includes('计发工时') && mdt.includes('11.34h'), mdt.slice(0, 100));
+  ok('补签明细列出三项构成', mdt.includes('기본 8h') && mdt.includes('연장 2.67h') && mdt.includes('개발지원 0.67h'));
+  ok('补签明细显示当日金额 136,215', mdt.includes('136,215'));
+  ok('补签明细不再出现旧「工时 / 加班」', !mdt.includes('工时 / 加班'));
+  await page.click('#mk-close');
+
+  const restBefore = await page.evaluate(() => Store.peek('2026-10-06').restMinutes);
+  await page.click('.tab[data-page="settings"]');
+  await page.waitForTimeout(250);
+  await page.fill('#set-rest-minutes', '60');
+  await page.dispatchEvent('#set-rest-minutes', 'change');
+  await page.waitForTimeout(300);
+  const restAfter = await page.evaluate(() => Store.peek('2026-10-06').restMinutes);
+  ok('改休息分钟不再回写历史记录', restAfter === restBefore, `${restBefore} → ${restAfter}`);
+  ok('休息改 60 分后计发工时不变', await page.evaluate(() =>
+    Math.abs(Salary.paidHoursFor('2026-10-06').total - 11.34) < 0.001));
+  await page.fill('#set-rest-minutes', '30');
+  await page.dispatchEvent('#set-rest-minutes', 'change');
+  await page.waitForTimeout(250);
+  await page.click('.tab[data-page="attendance"]');
+  await page.waitForTimeout(350);
+  ok('还原后月历格子仍是 11.3h', (await chText('2026-10-06')) === '11.3h');
+  ok('考勤统计标签改为「计发工时」', await page.$eval('#m-hours', e =>
+    e.parentElement.querySelector('i').textContent.trim()) === '计发工时');
+  ok('每日记录明细显示计发构成', (await page.textContent('#att-list')).includes('计发'));
+
+  await page.click('.tab[data-page="salary"]');
+  await page.waitForTimeout(350);
+  const attHtml = await page.innerHTML('#sal-attendance');
+  ok('月薪考勤汇总显示「计发工时」与「加班/开发」',
+    attHtml.includes('计发工时') && attHtml.includes('加班/开发'));
+
   ok('全流程无 JS 报错', errors.length === 0, errors.slice(0, 3).join('; '));
 
   await browser.close();

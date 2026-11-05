@@ -63,11 +63,12 @@ const Salary = (() => {
    * 计算单日出勤数据（工时/夜班时/加班时）
    * 不直接算钱——月薪制下钱按月总额算，日结只统计工时
    *
-   * 计薪口径（2026-10-28 起）：**一次签到 = 整天出勤，按班次整班计薪**
-   *   · 白班 08:20–20:20 扣 30m 休息 = 11.5h；周五夜班 20:20–06:20 = 9.5h
-   *   · 签到时刻、是否签退都不影响钱——防忘打卡、防忘签退少算
-   *   · 迟到 / 早退 → rec.adjust 登记分钟扣减
-   *   · 加班 → rec.adjust 登记增加分钟，超出 11.5h 的部分按 1.5 倍另算
+   * 统计口径（2026-11-05 起）：**只算「班次在岗工时」，不参与计薪**
+   *   · 白班 08:20–20:20 扣休息 = 11.5h；周五夜班 20:20–06:20 = 10h 短班
+   *   · 这个数值只用于「在岗工时」统计与休息分钟展示；金额一律走 calcDayPay
+   *     （计发小时 = 기본 8h + 연장 2.67h + 개발지원 0.67/0.75h → 白 11.34h / 夜 11.42h）
+   *   · 迟到 / 早退 / 增加时间 → rec.adjust 登记分钟，直接换算金额（见 calcDayPay），
+   *     这里仍同步扣加在岗工时，仅为让历史统计读得通
    *   · nowForOpen 参数保留只为兼容调用方，新口径下不再使用
    */
   function calcDay(rec, dateStr, opts = {}) {
@@ -464,6 +465,31 @@ const Salary = (() => {
     };
   }
 
+  /**
+   * 单日「计发小时」构成（2026-11-05 口径，今日页 / 考勤页 / 月薪页统一用它显示）
+   *   与 calcDay().workHours（班次在岗工时，受休息分钟影响）彻底分开，
+   *   金额只认这里：base = 기본 8h + 연장 2.67h + 개발지원 0.67/0.75h
+   *   → 白 11.34h / 夜 11.42h；登记增减分钟直接加减小时，不经过在岗工时。
+   * 非出勤日（休息 / 请假 / 未打卡）全部返回 0。
+   */
+  function paidHoursFor(dateStr) {
+    const p = calcDayPay(dateStr);
+    const z = {
+      kind: p.kind, base: 0, std: 0, ot: 0, dev: 0,
+      add: 0, deduct: 0, total: 0, variable: 0, pay: p.total
+    };
+    if (p.kind !== 'work') return z;
+    const { quotaHours: base, otHoursPaid: ot, devHours: dev, addHours: add, deductHours: deduct } = p;
+    return {
+      kind: p.kind,
+      base, std: Math.max(0, base - ot - dev), ot, dev,
+      add, deduct,
+      total: Math.max(0, base + add - deduct),                 // 当日实际计发小时
+      variable: Math.max(0, ot + dev + add - deduct),          // 其中按 1.5 倍计发的部分
+      pay: p.total
+    };
+  }
+
   /** 安全取数：null/undefined/NaN 时回落到默认 */
   function num(v, dflt) {
     const n = Number(v);
@@ -637,6 +663,8 @@ const Salary = (() => {
 
     let workDays = 0, nightDays = 0, holidayWorkDays = 0, restDays = 0, leaveDays = 0, annualDays = 0, otDays = 0;
     let workHours = 0, otHours = 0, nightHours = 0, extraOtHours = 0;
+    // 计发小时（与在岗工时分开）：考勤页 / 月薪页的所有「工时」显示都走这一套
+    let paidHours = 0, otPaidHours = 0, addHours = 0, deductHours = 0;
     let holidayPayDays = 0, weeklyCount = 0;
     const T = { std: 0, leave: 0, ot: 0, dev: 0, night: 0, extraOt: 0, deduct: 0, holiday: 0, holidayPay: 0 };
     const dayList = [];
@@ -704,6 +732,10 @@ const Salary = (() => {
         if (p.extraOtHours > 0.01) otDays++;
         workHours += p.workHours; otHours += p.otHours;
         nightHours += p.nightHours; extraOtHours += p.extraOtHours;
+        // 计发小时 = 固定额度 + 登记增加 − 登记扣减；1.5 倍部分单列
+        paidHours += Math.max(0, p.quotaHours + p.addHours - p.deductHours);
+        otPaidHours += Math.max(0, p.otHoursPaid + p.devHours + p.addHours - p.deductHours);
+        addHours += p.addHours; deductHours += p.deductHours;
       }
       T.std += p.stdPay; T.ot += p.otPay; T.dev += p.devPay; T.night += p.nightPay;
       T.extraOt += p.extraOtPay; T.deduct += p.deductPay; T.holiday += p.holidayExtra;
@@ -798,6 +830,8 @@ const Salary = (() => {
       nightDays, holidayWorkDays, otDays,
       holidayPayDays, holidayPayTotal, weeklyCount, weeklyPay,
       workHours: round2(workHours), otHours: round2(otHours),
+      paidHours: round2(paidHours), otPaidHours: round2(otPaidHours),
+      addHours: round2(addHours), deductHours: round2(deductHours),
       nightHours: round2(nightHours), extraOtHours: round2(extraOtHours),
       dayList,
       taxIsFixed: (st.taxMode || 'manual') === 'manual',
@@ -853,6 +887,7 @@ const Salary = (() => {
 
     // ===== 1. 考勤汇总 =====
     let workHours = 0, otHours = 0, nightHours = 0, workDays = 0, restDays = 0;
+    let paidHours = 0, otPaidHours = 0, addHours = 0, deductHours = 0;
     const dayList = [];
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const isCurrentMonth = today.getFullYear() === year && today.getMonth() + 1 === month;
@@ -870,6 +905,9 @@ const Salary = (() => {
       dayList.push({ dateStr, rec, r });
       if (r.segCount > 0) {
         workDays++; workHours += r.workHours; otHours += r.otHours; nightHours += r.nightHours;
+        const ph = paidHoursFor(dateStr);
+        paidHours += ph.total; otPaidHours += ph.variable;
+        addHours += ph.add; deductHours += ph.deduct;
       }
     }
 
@@ -929,6 +967,10 @@ const Salary = (() => {
       workDays, restDays, leaveDays: 0, annualDays: 0,
       nightDays: 0, holidayWorkDays: 0, otDays: 0, extraOtHours: 0,
       workHours, otHours, nightHours, dayList,
+      paidHours: Math.round(paidHours * 100) / 100,
+      otPaidHours: Math.round(otPaidHours * 100) / 100,
+      addHours: Math.round(addHours * 100) / 100,
+      deductHours: Math.round(deductHours * 100) / 100,
       taxIsFixed: (st.taxMode || 'manual') === 'manual',
       perfNote: perf !== 1 ? `（含评价系数 ${perf}）` : ''
     };
@@ -985,7 +1027,7 @@ const Salary = (() => {
   }
 
   return {
-    distance, nightOverlapHours, calcDay, calcDayPay,
+    distance, nightOverlapHours, calcDay, calcDayPay, paidHoursFor,
     calcMonth, calcMonthSlip, calcMonthAttendance, payrollModeFor,
     calcTax, calcKoreanTax,
     judgeDay, statusFromSegments, monthGrid, monthStatusStats, STATUS,

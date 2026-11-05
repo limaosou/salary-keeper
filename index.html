@@ -50,8 +50,8 @@
         <button class="btn btn-primary" id="btn-manual-in">手动签到</button>
       </div>
       <div class="hint" style="margin:8px 0 0">
-        <b>一次签到 = 一整天出勤</b>，按当班整班计薪（白班 08:20–20:20、夜班 20:20–次日 08:20），
-        不用签退，忘了打、晚点打都不会少算。
+        <b>一次签到 = 一整天出勤</b>，按三项固定计发（白班 <b>11.34h</b> / 夜班 <b>11.42h</b>），
+        班次 08:20–20:20 的 11.5h 只是「在岗时长」、不参与算钱；不用签退，忘了打、晚点打都不会少算。
         真有迟到 / 早退 / 加班，到【考勤】点对应日期 →「特殊情况登记」填分钟和说明。
       </div>
       <label class="switch-row">
@@ -87,7 +87,7 @@
       <div class="card-title">当月统计</div>
       <div class="hero-grid three">
         <div class="hero-cell"><span id="m-days">0 天</span><i>出勤</i></div>
-        <div class="hero-cell"><span id="m-hours">0h</span><i>总工时</i></div>
+        <div class="hero-cell"><span id="m-hours">0h</span><i>计发工时</i></div>
         <div class="hero-cell"><span id="m-earn">0.00</span><i>已赚</i></div>
       </div>
       <div id="att-stat" class="stat-chips"></div>
@@ -95,7 +95,7 @@
 
     <!-- 月历视图 -->
     <div class="card">
-      <div class="card-title">本月日历 <i class="ct-sub">点击日期可补签 / 请假 · 带「夜」为夜班</i></div>
+      <div class="card-title">本月日历 <i class="ct-sub">点击日期可补签 / 请假 · 带「夜」为夜班 · 数字为计发小时</i></div>
       <div class="cal-head">
         <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
       </div>
@@ -142,7 +142,7 @@
         <div class="mk-block">
           <div class="mk-label">手工补签</div>
           <div class="hint" style="margin:0 0 8px">
-            <b>一次补签 = 那天整天出勤</b>，按班次整班计薪，晚点补、忘了补都不扣时间。
+            <b>一次补签 = 那天整天出勤</b>，按计发小时算钱（白班 11.34h / 夜班 11.42h，与签到时刻、休息分钟无关），晚点补、忘了补都不扣时间。
             时间只作留痕，不影响钱。
           </div>
           <div class="mk-row">

@@ -268,9 +268,15 @@
       if (tappable) cls.push('tappable');
       const sub = c.code === 'future' ? '' : `<span class="cs">${c.sym}</span>`;
       const ntag = isNight ? '<span class="cnight">夜</span>' : '';
-      const hours = (c.code !== 'future' && c.workHours > 0) ? `<span class="ch">${c.workHours.toFixed(1)}h</span>` : '';
+      // 格内小时 = 「计发小时」（白 11.34h / 夜 11.42h ± 登记分钟），
+      // 与班次在岗 11.5h、休息分钟彻底解耦——和今日页同一口径
+      const ph = (c.code !== 'future' && c.hasSeg) ? Salary.paidHoursFor(c.dateStr) : null;
+      const hours = (ph && ph.total > 0) ? `<span class="ch">${ph.total.toFixed(1)}h</span>` : '';
       const dot = (c.makeups && c.makeups.length) ? '<span class="mkdot"></span>' : '';
-      const title = c.isHoliday ? ` title="${c.holidayName || '공휴일'}${c.hasSeg ? ' · 出勤全天×1.5' : ''}"` : '';
+      const titleParts = [];
+      if (c.isHoliday) titleParts.push(`${c.holidayName || '공휴일'}${c.hasSeg ? ' · 出勤全天×1.5' : ''}`);
+      if (ph && ph.total > 0) titleParts.push(`计发 ${ph.total.toFixed(2)}h = 기본 ${ph.std}h ＋ 연장 ${ph.ot}h ＋ 개발지원 ${ph.dev}h${ph.add || ph.deduct ? `（登记 ＋${ph.add.toFixed(2)} / −${ph.deduct.toFixed(2)}h）` : ''}`);
+      const title = titleParts.length ? ` title="${titleParts.join(' · ')}"` : '';
       return `<div class="${cls.join(' ')}" data-date="${c.dateStr}" data-code="${code}"${title}${tappable ? ' role="button" tabindex="0"' : ''}>
         <span class="cd">${c.date}</span>${sub}${ntag}${hours}${dot}
       </div>`;
@@ -361,9 +367,11 @@
     badge.className = 'lg s-' + st.code;
     badge.textContent = st.label;
 
-    // 打卡明细（首行固定显示该日班次）
+    // 打卡明细（首行固定显示该日班次；工时一律走「计发小时」口径）
     const segs = rec && rec.segments ? rec.segments : [];
     const isNightRec = !!(rec && rec.shiftType === 'night');
+    const ph = Salary.paidHoursFor(mkDate);
+    const won = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
     const srcTag = sg => sg.src === 'manual' ? '手动/补签' : (sg.src === 'auto' ? '自动打卡' : (sg.makeup ? '手工补签' : '自动打卡'));
     $('mk-detail').innerHTML =
       `<div class="mk-seg"><span>班次</span><b>${isNightRec ? '🌙 夜班' : '☀️ 白班'}</b></div>` +
@@ -372,7 +380,11 @@
           <span>第 ${i + 1} 段 <i class="opic">${srcTag(sg)}</i></span>
           <b>${fmtTime(sg.in)}${sg.out ? ' – ' + fmtTime(sg.out) : ''}</b>
         </div>`).join('') +
-        `<div class="mk-seg"><span>工时 / 加班</span><b>${st.workHours.toFixed(1)}h / ${st.otHours.toFixed(1)}h</b></div>` +
+        `<div class="mk-seg"><span>计发工时</span><b>${ph.total.toFixed(2)}h</b></div>` +
+        `<div class="mk-seg"><span>构成</span><b>기본 ${ph.std}h ＋ 연장 ${ph.ot}h ＋ 개발지원 ${ph.dev}h</b></div>` +
+        (ph.add || ph.deduct
+          ? `<div class="mk-seg"><span>登记增减</span><b>＋${ph.add.toFixed(2)}h / −${ph.deduct.toFixed(2)}h</b></div>` : '') +
+        `<div class="mk-seg"><span>当日金额</span><b>${won(ph.pay)}원</b></div>` +
         (st.extra ? `<div class="mk-seg"><span>说明</span><b class="mk-note">${st.extra}</b></div>` : '')
       : `<div class="mk-empty">当日无打卡记录${st.leave ? `（已登记请假：${st.leave.type}）` : ''}</div>`);
 
@@ -502,7 +514,9 @@
     renderCalendar();
     const sum = Salary.calcMonth(y, m, { mode: Salary.payrollModeFor(y, m) });
     $('m-days').textContent = `${sum.workDays} 天`;
-    $('m-hours').textContent = `${sum.workHours.toFixed(1)}h`;
+    // 「计发工时」= Σ(기본 8 + 연장 2.67 + 개발지원 0.67/0.75 ± 登记分钟)，
+    // 与今日页同口径；sum.workHours 是班次在岗工时，只留在引擎返回里做兼容
+    $('m-hours').textContent = `${(sum.paidHours ?? sum.workHours).toFixed(1)}h`;
     $('m-earn').textContent = money(sum.gross);
 
     const box = $('att-list');
@@ -518,10 +532,12 @@
       const wk = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
       const times = rec.segments.map(sg =>
         `${fmtTime(sg.in)}${sg.out ? '–' + fmtTime(sg.out) : ''}`).join('　');
-      // 日薪统一走「标准 8h + 固定加班 3.5h + 夜班补助 + 假日 1.5 倍」口径
+      // 金额与计发小时统一走引擎（기본 8h + 연장 2.67h + 개발지원 0.67/0.75h，
+      // 再按登记分钟增减）；UI 不再自己复刻一套 11.5h / 3.5h 旧额度
       const pay = Salary.calcDayPay(dateStr, {
         nowForOpen: dateStr === todayKey ? new Date() : new Date(`${dateStr}T23:59:59`)
       });
+      const ph = Salary.paidHoursFor(dateStr);
       const isNight = rec.shiftType === 'night';
       const tag = rest ? '<span class="tag rest">休息日</span>'
         : `<span class="tag ${isNight ? 'night' : 'day'}">${isNight ? '夜班' : '白班'}</span>`;
@@ -537,7 +553,8 @@
         : `${pay.leaveType || '请假'} 不计薪`;
       else if (pay.kind === 'none') detail = '未打卡';
       else {
-        const parts = [`工时 ${pay.workHours.toFixed(1)}h`, `加班 ${Math.max(pay.otHours, 0).toFixed(1)}h`];
+        const parts = [`计发 ${ph.total.toFixed(2)}h（기본 ${ph.std}＋연장 ${ph.ot}＋개발 ${ph.dev}）`];
+        if (ph.add || ph.deduct) parts.push(`登记 ＋${ph.add.toFixed(2)}/−${ph.deduct.toFixed(2)}h`);
         if (pay.nightPay > 0) parts.push(`夜补 ${krN(pay.nightPay)}`);
         if (pay.holidayExtra > 0) parts.push(`假日加给 ${krN(pay.holidayExtra)}`);
         detail = parts.join(' · ');
@@ -618,10 +635,13 @@
     // 근태내역
     const attRows = [
       ['출근일수 出勤天数', `${sum.workDays}일`],
-      ['총근로시간 总工时', `${sum.workHours.toFixed(1)}h`],
-      ['초과근로시간 加班', `${sum.otHours.toFixed(1)}h`]
+      ['총근로시간 计发工时', `${(sum.paidHours ?? sum.workHours).toFixed(1)}h`],
+      ['초과근로시간 加班/开发', `${(sum.otPaidHours ?? sum.otHours).toFixed(1)}h`]
     ];
     if (mode === 'attendance') {
+      if ((sum.addHours || 0) > 0 || (sum.deductHours || 0) > 0) {
+        attRows.push(['등록조정 登记增减', `＋${sum.addHours.toFixed(2)}h / −${sum.deductHours.toFixed(2)}h`]);
+      }
       attRows.push(
         ['야간근로일 夜班天数', `${sum.nightDays}일`],
         ['야간근로시간 夜班工时', `${sum.nightHours.toFixed(1)}h`],
@@ -912,8 +932,9 @@
     bindSub('set-night-shift-start', 'shift', 'nightStart', 'str', refreshAtt);
     bindSub('set-night-shift-end', 'shift', 'nightEnd', 'str', refreshAtt);
     bindNum('set-rest-minutes', 'restMinutes', () => {
-      // 休息扣除改动要同步到历史记录，否则旧记录仍按旧值算工时
-      Object.keys(Store.attendance).forEach(k => { Store.attendance[k].restMinutes = st().restMinutes; });
+      // 休息分钟只是「在岗工时」的显示参数，金额与计发小时早已与它解耦。
+      // 不再回写历史记录（旧做法会把全月 rec.restMinutes 覆盖，等于篡改历史数据）；
+      // 这里只保存全局默认，之后新建的记录才采用新值。
       Store.save(); refreshAll();
     });
     $('set-mon-late').onchange = e => {
