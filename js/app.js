@@ -317,6 +317,30 @@
 
   function closeMakeup() { $('mk-mask').hidden = true; mkDate = null; }
 
+  /** 批量补签本月：把当月所有「未记录的工作日」按白班 · 一次签到 = 整天出勤 一次性补上。
+   *  跳过：未来日期 / 休息日 / 法定假日（假日已自动给 8h，无需补）/ 已有打卡记录 的天。幂等。 */
+  function batchMakeupMonth() {
+    const [y, m] = attMonth.split('-').map(Number);
+    const now = new Date();
+    const cells = Salary.monthGrid(y, m, { now });
+    let made = 0, skipped = 0;
+    for (const c of cells) {
+      if (c.pad) continue;
+      if (c.code === 'future') { skipped++; continue; }   // 未来不补
+      if (c.code === 'rest') { skipped++; continue; }      // 休息日 / 法定假日不补（假日已自动 8h）
+      if (c.hasSeg) { skipped++; continue; }               // 已有打卡记录不重复补
+      const w = Salary.shiftWindowFor(c.dateStr, 'day', Store.settings);
+      const res = Store.addMakeup(c.dateStr, {
+        type: 'in',
+        time: new Date(`${c.dateStr}T${(w.start || '08:20')}:00`).toISOString(),
+        note: '批量补签'
+      });
+      if (res.ok) made++; else skipped++;
+    }
+    toast(`批量补签完成：已补 ${made} 天（跳过 ${skipped} 天：休息/假日/已记录/未来）`);
+    refreshAll();
+  }
+
   // 一次补签 = 那天整天出勤，时间只作留痕，计薪按班次整班算。
   // 默认时间取该日班次的上班时刻（白班 08:20 / 夜班 20:20），纯留痕不影响钱
   function syncMkTime() {
@@ -471,6 +495,16 @@
       Store.save();
       toast(rec.isRestDay ? '已标记为休息日' : '已取消休息日');
       renderMakeupPanel(); refreshAll();
+    };
+
+    // 批量补签本月（白班）：先算好将补几天，确认后再执行
+    $('btn-batch-makeup').onclick = () => {
+      const [y, m] = attMonth.split('-').map(Number);
+      const cells = Salary.monthGrid(y, m, { now: new Date() });
+      const targets = cells.filter(c => !c.pad && c.code !== 'future' && c.code !== 'rest' && !c.hasSeg);
+      if (!targets.length) { toast('本月没有需要补签的工作日'); return; }
+      if (!confirm(`将把本月 ${targets.length} 个工作日按「白班 · 一次签到 = 整天出勤」批量补签，确定？`)) return;
+      batchMakeupMonth();
     };
 
     const saveAdjust = () => {

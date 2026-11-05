@@ -77,6 +77,17 @@ let page0;
   await page0.click('.tab[data-page="attendance"]');
   await page0.waitForTimeout(500);
 
+  // 跨月修复：本测试数据写死在 2026-10，但日历默认显示当前月，
+  // 必须在交互前翻到 2026-10，否则点击 2026-10-13 那格会因不存在而超时
+  for (let i = 0; i < 24; i++) {
+    const cm = (await page0.textContent('#cur-month') || '').trim();
+    if (cm === '2026-10') break;
+    await page0.click('#prev-month');
+    await page0.waitForTimeout(120);
+  }
+  const cmFinal = (await page0.textContent('#cur-month') || '').trim();
+  ok('日历已翻到测试数据所在月 2026-10', cmFinal === '2026-10', cmFinal);
+
   // ── ① 按时出勤 ──
   let h = await hours(DAY);
   ok('按时出勤 → 整班 11.5h', h && Math.abs(h.w - WORK) < 0.01, h ? h.w.toFixed(2) : 'null');
