@@ -31,9 +31,9 @@
         </button>
       </div>
       <div class="hero-grid">
-        <div class="hero-cell"><span id="today-worked">0h00m</span><i>已工时</i></div>
-        <div class="hero-cell"><span id="today-ot">0h00m</span><i>加班</i></div>
-        <div class="hero-cell"><span id="today-segments">0</span><i>打卡段</i></div>
+        <div class="hero-cell"><span id="today-worked">—</span><i>计发工时</i></div>
+        <div class="hero-cell"><span id="today-ot">—</span><i>연장加班</i></div>
+        <div class="hero-cell"><span id="today-segments">—</span><i>개발지원</i></div>
       </div>
       <div class="today-shift" id="today-shift"></div>
     </header>
@@ -70,18 +70,9 @@
       <div class="rowline"><span>개발지원수당 开发支援</span><b id="d-dev">0</b></div>
       <div class="rowline"><span>야간근로수당 夜班补助</span><b id="d-night">—</b></div>
       <div class="rowline" hidden><span>휴일근로수당 节假日加给</span><b id="d-holiday">0</b></div>
+      <div class="rowline" hidden><span>特殊情况登记（增减）</span><b id="d-adjust">0</b></div>
       <div class="rowline total"><span>当日合计</span><b id="d-total">0</b></div>
       <div class="hint" id="today-rate"></div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">休息扣除</div>
-      <div class="stepper">
-        <button class="step-btn" id="rest-minus">−</button>
-        <span id="rest-value">30 分钟</span>
-        <button class="step-btn" id="rest-plus">+</button>
-      </div>
-      <div class="hint">每日休息扣除（默认 30 分钟），从当日工时中扣掉；也可到【设置 → 교대근무】统一改。</div>
     </div>
   </section>
 
@@ -169,8 +160,9 @@
         <div class="mk-block">
           <div class="mk-label">特殊情况登记（迟到 / 早退 / 超时）</div>
           <div class="hint" style="margin:0 0 8px">
-            手动签到 / 补签默认<b>按整班 11.5 小时计</b>，忘了打卡、晚点补都不会少算。
+            手动签到 / 补签默认<b>按当日班次固定计发</b>（白班 11.34h、夜班 11.42h），忘了打卡、晚点补都不会少算。
             真有偏差才在这里登记：迟到 / 早退填分钟扣减；干超过一班（12 小时）填「增加时间」另算。
+            登记分钟直接增减金额，与休息分钟无关。
           </div>
           <div class="mk-row">
             <label for="mk-late">迟到扣减（分钟）</label>
@@ -314,7 +306,8 @@
       <div class="field"><label>백근 퇴근 白班下班</label><input type="time" id="set-day-end"></div>
       <div class="field"><label>야근 출근 夜班上班</label><input type="time" id="set-night-shift-start"></div>
       <div class="field"><label>야근 퇴근 夜班下班（次日）</label><input type="time" id="set-night-shift-end"></div>
-      <div class="field"><label>휴게시간 每日休息扣除（分钟）</label><input type="number" id="set-rest-minutes" step="5" min="0"></div>
+      <div class="field"><label>휴게시간 每日休息（分钟）</label><input type="number" id="set-rest-minutes" step="5" min="0"></div>
+      <div class="hint">休息分钟只用于班次窗口 / 工时显示，不参与任何工资计算。</div>
       <label class="switch-row">
         <span>白班周一晚 2 小时上班</span>
         <input type="checkbox" id="set-mon-late">
@@ -345,10 +338,10 @@
         <em class="switch"></em>
       </label>
       <div class="hint">
-        白班日薪 = 기본 8h ＋ 연장 2.67h ＋ 개발지원 0.67h（三项中后两项按加班倍率计）；
-        夜班的开发支援为 0.75h，再加 3.5h × 시급 × 0.5 夜班补助。
-        整班 11.5h 与三项合计的差额（白 0.16h、夜 0.08h）按加班倍率补进加班费，
-        所以拆分前后日薪金额完全一致；超出整班的部分（登记「增加时间」）仍按加班倍率另计。
+        白班日薪 = 기본 8h ＋ 연장 2.67h ＋ 개발지원 0.67h（后两项按加班倍率计）→ 计发 <b>11.34h</b>；
+        夜班的开发支援为 0.75h（计发 <b>11.42h</b>），再加 3.5h × 시급 × 0.5 夜班补助。
+        一次签到即锁定整班固定计发，<b>不再按班次 11.5h 额度、也不补差</b>；
+        休息分钟只影响工时显示，不参与金额；迟到 / 早退 / 增加时间按登记分钟增减（× 加班倍率）。
       </div>
     </div>
 

@@ -113,29 +113,57 @@ const SEED = () => {
   const H = 10470;
   ok('白班工时 = 12h − 0.5h 休息 = 11.5h', Math.abs(dayPay.a.workHours - 11.5) < 0.01, dayPay.a.workHours.toFixed(2));
   ok('白班标准工资 = 8h × 10,470 = 83,760', dayPay.a.stdPay === 8 * H, kr(dayPay.a.stdPay));
-  // 2026-11-05 日薪拆分：기본 8h / 연장 2.67h / 개발지원 白0.67h·夜0.75h，
-  // 差额（白 0.16h、夜 0.08h）按 1.5 倍补进加班费；拆分前后总额必须分毫不差
+  // 2026-11-05 日薪口径：기본 8h / 연장 2.67h / 개발지원 白0.67h·夜0.75h，后两项按加班倍率计；
+  // 计发小时 白 11.34h / 夜 11.42h —— 不再以班次 11.5h 为额度、不再补差
   ok('白班 개발지원 = 0.67h × 10,470 × 1.5 = 10,522', dayPay.a.devPay === 10522, kr(dayPay.a.devPay));
-  ok('白班加班（含补差）= 54,968 − 10,522 = 44,446', dayPay.a.otPay === 44446, kr(dayPay.a.otPay));
-  ok('加班＋开发支援 = 原固定加班 54,968（金额等价）',
-    dayPay.a.otPay + dayPay.a.devPay === 54968, kr(dayPay.a.otPay + dayPay.a.devPay));
-  ok('白班开发支援 0.67h / 补差 0.16h',
-    Math.abs(dayPay.a.devHours - 0.67) < 0.001 && Math.abs(dayPay.a.fillHours - 0.16) < 0.001,
-    `${dayPay.a.devHours.toFixed(2)}h + ${dayPay.a.fillHours.toFixed(2)}h`);
+  ok('白班加班 = 2.67h × 10,470 × 1.5 = 41,933', dayPay.a.otPay === 41933, kr(dayPay.a.otPay));
+  ok('加班＋开发支援 = 3.34h × 시급 × 1.5 = 52,455',
+    dayPay.a.otPay + dayPay.a.devPay === 52455, kr(dayPay.a.otPay + dayPay.a.devPay));
+  ok('白班计发 11.34h / 补差已取消',
+    Math.abs(dayPay.a.quotaHours - 11.34) < 0.001 && dayPay.a.fillHours === 0,
+    `${dayPay.a.quotaHours.toFixed(2)}h / 补差 ${dayPay.a.fillHours.toFixed(2)}h`);
   ok('夜班 개발지원 = 0.75h × 10,470 × 1.5 = 11,779', dayPay.b.devPay === 11779, kr(dayPay.b.devPay));
-  ok('夜班开发支援 0.75h / 补差 0.08h',
-    Math.abs(dayPay.b.devHours - 0.75) < 0.001 && Math.abs(dayPay.b.fillHours - 0.08) < 0.001,
-    `${dayPay.b.devHours.toFixed(2)}h + ${dayPay.b.fillHours.toFixed(2)}h`);
-  ok('白班合计 138,728', dayPay.a.total === 138728, kr(dayPay.a.total));
+  ok('夜班计发 11.42h / 补差已取消',
+    Math.abs(dayPay.b.quotaHours - 11.42) < 0.001 && dayPay.b.fillHours === 0,
+    `${dayPay.b.quotaHours.toFixed(2)}h / 补差 ${dayPay.b.fillHours.toFixed(2)}h`);
+  ok('白班合计 136,215', dayPay.a.total === 136215, kr(dayPay.a.total));
   ok('夜班补助 = 3.5h × 10,470 × 0.5 = 18,323', dayPay.b.nightPay === 18323, kr(dayPay.b.nightPay));
-  ok('夜班合计 = 白班 + 夜班补助 = 157,051', dayPay.b.total === 138728 + 18323, kr(dayPay.b.total));
-  ok('夜班比白班多 18,323원', dayPay.b.total - dayPay.a.total === 18323, kr(dayPay.b.total - dayPay.a.total));
+  ok('夜班合计 = 白班 + 夜班补助 + 개발지원 0.08h = 155,794', dayPay.b.total === 155794, kr(dayPay.b.total));
+  ok('夜班比白班多 19,579원', dayPay.b.total - dayPay.a.total === 19579, kr(dayPay.b.total - dayPay.a.total));
   const devRow = await page.evaluate(() => {
     const s = Salary.calcMonth(2026, 10, { mode: 'attendance' });
     return { row: s.grossItems.find(i => i.id === 'dev'), ot: s.otPay, dev: s.devPay };
   });
   ok('月薪应发明细新增「개발지원수당」行', !!devRow.row && devRow.row.amount > 0, JSON.stringify(devRow.row || {}));
-  ok('月薪加班＋开发支援 = 拆分前固定加班口径', devRow.ot + devRow.dev > 0, `${kr(devRow.ot)} + ${kr(devRow.dev)}`);
+  ok('月薪加班＋开发支援均正数', devRow.ot + devRow.dev > 0, `${kr(devRow.ot)} + ${kr(devRow.dev)}`);
+
+  // 休息分钟只影响工时显示，绝不能改钱（旧版点 +/− 会直接改工资）
+  const restSafe = await page.evaluate(() => {
+    const r = Store.day('2026-11-03');
+    const old = r.restMinutes;
+    const base = Salary.calcDayPay('2026-11-03').total;
+    r.restMinutes = 0; Store.save(); const a = Salary.calcDayPay('2026-11-03').total;
+    r.restMinutes = 60; Store.save(); const b = Salary.calcDayPay('2026-11-03').total;
+    r.restMinutes = old; Store.save();
+    return { base, a, b };
+  });
+  ok('休息 0/30/60 分金额完全一致', restSafe.base === restSafe.a && restSafe.a === restSafe.b,
+    JSON.stringify(restSafe));
+  // 迟到/早退/增加时间按登记分钟直接增减，不经过 workHours
+  const adjSafe = await page.evaluate(() => {
+    const r = Store.day('2026-11-03');
+    const old = r.adjust;
+    r.adjust = { lateMin: 60, earlyMin: 0, addMin: 0, note: '', at: '' }; Store.save();
+    const late = Salary.calcDayPay('2026-11-03');
+    r.adjust = { lateMin: 0, earlyMin: 0, addMin: 60, note: '', at: '' }; Store.save();
+    const add = Salary.calcDayPay('2026-11-03');
+    r.adjust = old; Store.save();
+    return { late: late.total, deduct: late.deductPay, add: add.total, extra: add.extraOtPay };
+  });
+  ok('登记迟到 60 分 → 扣 15,705（×1.5）',
+    adjSafe.late === 136215 - 15705 && adjSafe.deduct === 15705, JSON.stringify(adjSafe));
+  ok('登记增加 60 分 → 加 15,705（×1.5）',
+    adjSafe.add === 136215 + 15705 && adjSafe.extra === 15705, JSON.stringify(adjSafe));
 
   console.log('\n──── 三、法定节假日出勤全天 1.5 倍 ────');
   const holPay = await page.evaluate(() => {
@@ -147,8 +175,8 @@ const SEED = () => {
   });
   ok('10-09 被识别为法定假日（한글날）', holPay.isHoliday && holPay.name === '한글날', holPay.name);
   // 2026-10-29 新规则：假日出勤 = 出勤 ×1.5 ＋ 假日本身 8h（유급휴일）
-  ok('假日加给 = 日薪 × 0.5 ＋ 假日 8h = 153,124', holPay.extra === 153124, kr(holPay.extra));
-  ok('假日出勤合计 = 138,728 × 1.5 ＋ 8h = 291,852', holPay.total === 291852, kr(holPay.total));
+  ok('假日加给 = 136,215 × 0.5 ＋ 假日 8h = 151,868', holPay.extra === 151868, kr(holPay.extra));
+  ok('假日出勤合计 = 136,215 ＋ 151,868 = 288,083', holPay.total === 288083, kr(holPay.total));
   // 清掉这一天的测试数据，避免污染第四章的当月实算
   await page.evaluate(() => { delete Store.attendance['2026-10-09']; Store.save(); });
 
@@ -161,9 +189,9 @@ const SEED = () => {
   const attTxt = await page.textContent('#sal-attendance');
   ok('考勤汇总显示 8 天出勤', /出勤天数\s*8일/.test(attTxt.replace(/\s+/g, ' ')), attTxt.replace(/\s+/g, ' ').slice(0, 60));
   const gross1 = await page.textContent('#sal-gross');
-  // 2026-10-29 新规则：1,668,274 + 공휴일수당 3일（10-03 토 + 10-05 월 대체 + 10-09 금，3×83,760=251,280）
-  //                  + 주휴수당 1주（10-05~09 周：2 个法定假日视为出勤 + 3 天出勤，83,760）= 2,003,314
-  ok('应发为按 8 天实算值（含 공휴일수당 3일 + 주휴수당 1주）', gross1 === kr(2003314), `${gross1}（期望 ${kr(2003314)}）`);
+  // 2026-11-05 新日薪口径：8 天白班各降 2,513원（138,728 → 136,215）
+  //   → 2,003,314 − 8×2,513 = 1,983,210（공휴일수당 3일 + 주휴수당 1주 不变）
+  ok('应发为按 8 天实算值（含 공휴일수당 3일 + 주휴수당 1주）', gross1 === kr(1983210), `${gross1}（期望 ${kr(1983210)}）`);
   const bd1 = await page.textContent('#sal-breakdown');
   ok('应发明细含 공휴일수당 与 주휴수당 行', bd1.includes('공휴일수당') && bd1.includes('주휴수당'),
     bd1.replace(/\s+/g, ' ').slice(0, 160));
@@ -180,8 +208,8 @@ const SEED = () => {
   const attTxt2 = await page.textContent('#sal-attendance');
   const gross2 = await page.textContent('#sal-gross');
   ok('加一天出勤后天数变 9일', /出勤天数\s*9일/.test(attTxt2.replace(/\s+/g, ' ')), attTxt2.replace(/\s+/g, ' ').slice(0, 40));
-  ok('应发随之增加 138,728（非固定值）',
-    Number(gross2.replace(/,/g, '')) - Number(gross1.replace(/,/g, '')) === 138728,
+  ok('应发随之增加 136,215（非固定值 · 新日薪）',
+    Number(gross2.replace(/,/g, '')) - Number(gross1.replace(/,/g, '')) === 136215,
     `${gross1} → ${gross2}`);
 
   console.log('\n──── 四点五、주휴수당（周差）：一周满勤多给 8h ────');

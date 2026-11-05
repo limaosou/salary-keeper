@@ -355,11 +355,13 @@ const Salary = (() => {
   }
 
   /* ============================================================
-   * 日薪计算（新口径）
-   *   白班 = 标准 8h × 시급 ＋ 固定加班 3.5h × 시급 × 1.5
-   *   夜班 = 白班 ＋ 夜班补助 3.5h × 시급 × 야간가산율(0.5)
-   *   实际工时超出「标准 + 固定加班」的部分，仍按加班倍率计
-   *   法定节假日出勤 → 当日合计 × holidayMultiplier（全天 1.5 倍）
+   * 日薪计算（2026-11-05 口径）
+   *   白班 = 기본 8h × 시급 ＋ (연장 2.67h ＋ 개발지원 0.67h) × 시급 × 연장배율(1.5)
+   *   夜班 = 기본 8h ＋ (연장 2.67h ＋ 개발지원 0.75h) × 1.5 ＋ 야간수당 3.5h × 0.5
+   *   计发小时：白 11.34h / 夜 11.42h —— 不再以班次 11.5h 为额度，也不再补差
+   *   金额与「休息分钟 / 实际工时」完全解耦：一次签到即锁定整班，
+   *     迟到 / 早退 / 增加时间只按「特殊情况登记」的分钟数增减
+   *   法定节假日出勤 → 出勤部分 × holidayMultiplier ＋ 假日本身 8h
    * ============================================================ */
   function calcDayPay(dateStr, opts = {}) {
     const st = Store.settings;
@@ -367,7 +369,7 @@ const Salary = (() => {
     const dp = st.dailyPay || {};
     const hourly = Number(st.hourlyRate) || 0;
     const stdH = num(dp.stdHours, 8);
-    const fixH = num(dp.fixedOtHours, 3.5);   // 整班 8h 以外的总额度（11.5h 班次 → 3.5h）
+    // fixedOtHours 是旧整班额度（3.5h），仅为兼容旧 localStorage 保留，计薪不再使用
     const otH = num(dp.otHours, 2.67);        // 연장 加班
     const devDayH = num(dp.devDayHours, 0.67);
     const devNightH = num(dp.devNightHours, 0.75);
@@ -384,9 +386,9 @@ const Salary = (() => {
       isNight: shiftType === 'night',
       isHoliday: !!hol, holidayName: hol ? hol.name : '',
       isSaturday: new Date(`${dateStr}T00:00:00`).getDay() === 6,
-      stdPay: 0, otPay: 0, devPay: 0, nightPay: 0, extraOtPay: 0, holidayExtra: 0,
+      stdPay: 0, otPay: 0, devPay: 0, nightPay: 0, extraOtPay: 0, deductPay: 0, holidayExtra: 0,
       holidayPay: 0,
-      otHoursPaid: 0, devHours: 0, fillHours: 0,
+      quotaHours: 0, otHoursPaid: 0, devHours: 0, fillHours: 0, deductHours: 0, addHours: 0,
       leavePay: 0, leaveType: '', total: 0
     };
     // 法定假日基本工资：不上班也拿 8h × 시급（유급휴일）
@@ -423,25 +425,26 @@ const Salary = (() => {
 
     const isNight = shiftType === 'night';
     const stdPay = KR(stdH * hourly);
-    // 日薪拆分（2026-11-05 口径）：기본 8h / 연장 2.67h / 개발지원 白 0.67h·夜 0.75h，
-    // 三项都按加班倍率计；整班 11.5h 与三项合计的差额（白 0.16h、夜 0.08h）按 1.5 倍补进加班费。
-    // 总额仍 = 8h + 3.5h × 1.5，与拆分前分毫不差：先按额度一次性取整、再倒挤加班行，
-    // 避免三项各自四舍五入产生 1원 误差。
-    const quota = stdH + fixH;              // 整班额度 11.5h
-    // 固定按额度计发（一次签到 = 整天出勤，周一白班 9h / 周五夜班 9.5h 短班也按整班计），
-    // 不随实际工时浮动；只有登记「增加时间」超出整班的部分才另算加班费
-    const underQuota = fixH;
-    const devH = Math.min(isNight ? devNightH : devDayH, underQuota);
-    const otBaseH = Math.min(otH, Math.max(0, underQuota - devH));
-    const fillH = Math.max(0, underQuota - otBaseH - devH);              // 补差（并入加班费）
-    const variablePay = KR((otBaseH + fillH + devH) * hourly * otMul);
+    // 日薪按三项固定计发（2026-11-05 口径）：额度 = 8 + 2.67 + 0.67/0.75
+    //   → 白 11.34h / 夜 11.42h。不再用班次 11.5h 当额度、不再补差。
+    // 总额一次性取整再倒挤加班行，避免三项各自四舍五入差 1원。
+    const devH = isNight ? devNightH : devDayH;
+    const quota = stdH + otH + devH;                 // 计发小时（白 11.34 / 夜 11.42）
+    const variablePay = KR((otH + devH) * hourly * otMul);
     const devPay = KR(devH * hourly * otMul);
-    const otPay = Math.max(0, variablePay - devPay);                      // 加班 + 补差
+    const otPay = Math.max(0, variablePay - devPay);
     const nightPay = isNight ? KR(nightH * hourly * nightRate) : 0;
-    const extraH = Math.max(0, r.workHours - quota);                      // 登记「增加时间」超出整班的部分
-    const extraOtPay = KR(extraH * hourly * otMul);
 
-    const base = stdPay + otPay + devPay + nightPay + extraOtPay;
+    // 「特殊情况登记」的分钟数直接换算金额，不经过 workHours：
+    // 这样 휴게시간 休息分钟 / 班次时长只影响工时显示，永远碰不到钱。
+    const adj = rec.adjust || {};
+    const addH = Math.max(0, Number(adj.addMin) || 0) / 60;
+    const deductH = (Math.max(0, Number(adj.lateMin) || 0)
+      + Math.max(0, Number(adj.earlyMin) || 0)) / 60;
+    const extraOtPay = KR(addH * hourly * otMul);       // 增加时间 → 加班费
+    const deductPay = KR(deductH * hourly * otMul);     // 迟到/早退 → 从 1.5 倍部分扣
+
+    const base = Math.max(0, stdPay + otPay + devPay + nightPay + extraOtPay - deductPay);
     // 出勤加给：
     //   法定假日出勤 = 出勤部分 ×1.5 ＋ 假日本身 8h（韩国法定惯例，等效 20h）
     //   周六（无薪周休日）出勤 = 全天 ×1.5，不加 8h
@@ -453,9 +456,10 @@ const Salary = (() => {
     return {
       ...zero, kind: 'work', paid: true, isNight,
       workHours: r.workHours, otHours: r.otHours, nightHours: r.nightHours,
-      extraOtHours: extraH,
-      otHoursPaid: otBaseH + fillH, devHours: devH, fillHours: fillH,
-      stdPay, otPay, devPay, nightPay, extraOtPay, holidayExtra,
+      extraOtHours: addH,
+      quotaHours: quota, otHoursPaid: otH, devHours: devH, fillHours: 0,
+      deductHours: deductH, addHours: addH,
+      stdPay, otPay, devPay, nightPay, extraOtPay, deductPay, holidayExtra,
       total: base + holidayExtra
     };
   }
@@ -622,7 +626,6 @@ const Salary = (() => {
     const hourly = Number(st.hourlyRate) || 0;
     const dp = st.dailyPay || {};
     const stdH = Number(dp.stdHours != null ? dp.stdHours : 8);
-    const fixH = Number(dp.fixedOtHours != null ? dp.fixedOtHours : 3.5);
     const otH = Number(dp.otHours != null ? dp.otHours : 2.67);
     const devDayH = Number(dp.devDayHours != null ? dp.devDayHours : 0.67);
     const devNightH = Number(dp.devNightHours != null ? dp.devNightHours : 0.75);
@@ -635,7 +638,7 @@ const Salary = (() => {
     let workDays = 0, nightDays = 0, holidayWorkDays = 0, restDays = 0, leaveDays = 0, annualDays = 0, otDays = 0;
     let workHours = 0, otHours = 0, nightHours = 0, extraOtHours = 0;
     let holidayPayDays = 0, weeklyCount = 0;
-    const T = { std: 0, leave: 0, ot: 0, dev: 0, night: 0, extraOt: 0, holiday: 0, holidayPay: 0 };
+    const T = { std: 0, leave: 0, ot: 0, dev: 0, night: 0, extraOt: 0, deduct: 0, holiday: 0, holidayPay: 0 };
     const dayList = [];
 
     // ===== 주휴수당（周差）按周结算 =====
@@ -703,7 +706,7 @@ const Salary = (() => {
         nightHours += p.nightHours; extraOtHours += p.extraOtHours;
       }
       T.std += p.stdPay; T.ot += p.otPay; T.dev += p.devPay; T.night += p.nightPay;
-      T.extraOt += p.extraOtPay; T.holiday += p.holidayExtra;
+      T.extraOt += p.extraOtPay; T.deduct += p.deductPay; T.holiday += p.holidayExtra;
     }
 
     // 跨月周补判：本月 1 号之前、同一周内的周一~周五（例：10-01 是周四 → 补判 9/28~9/30）。
@@ -722,7 +725,8 @@ const Salary = (() => {
 
     // ===== 应发构成 =====
     const stdPay = KR((T.std) * perf);
-    const otPay = KR((T.ot + T.extraOt) * perf);
+    // 加班行 = 固定 연장 ＋ 登记「增加时间」 − 登记「迟到/早退」扣减
+    const otPay = Math.max(0, KR((T.ot + T.extraOt - T.deduct) * perf));
     const devPay = KR(T.dev * perf);
     const nightPay = KR(T.night * perf);
     const holPay = KR(T.holiday * perf);
@@ -759,7 +763,7 @@ const Salary = (() => {
       { id: 'std', name: '기본급', nameCn: '标准工资(8h×出勤日)', amount: stdPay,
         formula: `${workDays}일 × ${stdH}h × 시급 ${hourly.toLocaleString()}` },
       { id: 'ot', name: '연장근로수당', nameCn: '加班', amount: otPay,
-        formula: `${workDays}일 × ${otH}h × 시급 × ${otMul}（含补差，额度 ${fixH}h）${extraOtHours > 0.01 ? ` ＋ 超出 ${extraOtHours.toFixed(2)}h` : ''}` },
+        formula: `${workDays}일 × ${otH}h × 시급 × ${otMul}${extraOtHours > 0.01 ? ` ＋ 登记增加 ${extraOtHours.toFixed(2)}h` : ''}${T.deduct > 0 ? ' － 登记扣减（迟到/早退）' : ''}` },
       { id: 'dev', name: '개발지원수당', nameCn: '开发支援', amount: devPay,
         formula: `白 ${Math.max(0, workDays - nightDays)}일 × ${devDayH}h ＋ 夜 ${nightDays}일 × ${devNightH}h × 시급 × ${otMul}` },
       { id: 'night', name: '야간근로수당', nameCn: '夜班补助', amount: nightPay,

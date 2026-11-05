@@ -118,15 +118,16 @@
   function refreshToday() {
     const ds = todayStr();
     const rec = Store.attendance[ds];
-    const r = Salary.calcDay(rec || { segments: [], restMinutes: 0, isRestDay: false }, ds, { nowForOpen: new Date() });
     const s = st();
     const kr = n => Math.round(Number(n) || 0).toLocaleString('ko-KR');
+    const hasSeg = !!(rec && rec.segments.length);
 
-    // 当日金额 = 「기본 8h + 연장 2.67h + 개발지원 白0.67/夜0.75h + 补差」(均按加班倍率)
-    //        ＋ 夜班补助；一次签到即按整班锁定，迟到/早退/增加时间走「特殊情况登记」
+    // 金额一律取引擎口径：一次签到即锁定整班，按三项固定计发（白 11.34h / 夜 11.42h）。
+    // 不再按班次 11.5h / 实际工时 / 休息分钟的比例算钱；迟到早退与增加时间
+    // 只按「特殊情况登记」的分钟数增减。今日页与月薪页永远同源。
+    const pay = Salary.calcDayPay(ds, { nowForOpen: new Date() });
     const dp = s.dailyPay || {};
     const stdH = Number(dp.stdHours != null ? dp.stdHours : 8);
-    const fixH = Number(dp.fixedOtHours != null ? dp.fixedOtHours : 3.5);
     const otH = Number(dp.otHours != null ? dp.otHours : 2.67);
     const devDayH = Number(dp.devDayHours != null ? dp.devDayHours : 0.67);
     const devNightH = Number(dp.devNightHours != null ? dp.devNightHours : 0.75);
@@ -134,38 +135,19 @@
     const nightRate = Number(dp.nightAllowRate != null ? dp.nightAllowRate : 0.5);
     const holMul = Number(dp.holidayMultiplier != null ? dp.holidayMultiplier : 1.5);
     const otMul = Number(s.overtimeMultiplier || 1.5);
-    const hourly = Number(s.hourlyRate) || 0;
-
     const isNight = !!(rec && rec.shiftType === 'night');
     const devH = isNight ? devNightH : devDayH;
-    const quota = stdH + fixH;                                       // 整班额度 11.5h
-    const h = Math.max(0, r.workHours);
-    const hStd = Math.min(h, stdH);
-    const underQuota = Math.max(0, Math.min(h, quota) - stdH);
-    const hDev = Math.min(devH, underQuota);
-    const hOtBase = Math.min(otH, Math.max(0, underQuota - hDev));
-    const hFill = Math.max(0, underQuota - hOtBase - hDev);          // 补差，按 1.5 倍并入加班
-    const hOT = hOtBase + hFill;
-    const hExtra = Math.max(h - quota, 0);                            // 登记「增加时间」超出整班
-    // 与月度口径一致：总额一次性取整，再倒挤加班行，避免三项各自取整差 1원
-    const stdEarn = Math.round(hStd * hourly);
-    const variableEarn = Math.round((hOT + hDev + hExtra) * hourly * otMul);
-    const devEarn = Math.round(hDev * hourly * otMul);
-    const otEarn = Math.max(0, variableEarn - devEarn);
-    let earned = stdEarn + otEarn + devEarn;
-
-    const totalShift = quota;
-    if (isNight && totalShift > 0) {
-      earned += Math.min(h / totalShift, 1) * nightH * hourly * nightRate;
-    }
+    const quota = stdH + otH + devH;                 // 计发小时 白 11.34 / 夜 11.42
     const holInfo = Salary.holidayInfo(ds, s);
-    if (holInfo) earned *= holMul;
+    // 未签到时今日页只看「出勤所得」，假日 8h / 带薪假的金额在月薪页体现
+    const earned = hasSeg ? pay.total : 0;
 
     $('today-earned').textContent = kr(earned);
     $('today-currency').textContent = '₩';
-    $('today-worked').textContent = Salary.fmtHM(r.workHours * 3600000);
-    $('today-ot').textContent = Salary.fmtHM(r.otHours * 3600000);
-    $('today-segments').textContent = r.segCount;
+    // hero 三格改显示计发口径，不再出现班次在岗 11.5h / 加班 3.5h
+    $('today-worked').textContent = hasSeg ? quota.toFixed(2) + 'h' : '—';
+    $('today-ot').textContent = hasSeg ? otH.toFixed(2) + 'h' : '—';
+    $('today-segments').textContent = hasSeg ? devH.toFixed(2) + 'h' : '—';
 
     // 班次 / 假日提示
     const shiftTag = $('today-shift');
@@ -191,49 +173,47 @@
     }
 
     // 打卡状态点
-    const hasSeg = !!(rec && rec.segments.length);
     const ps = $('punch-state');
     ps.className = 'punch-state ' + (hasSeg ? 'in' : 'out');
     $('btn-manual-in').disabled = hasSeg;
 
-    // 当日明细：与 hero 的「已赚」同口径，按完成进度逐项累计
-    const nightEarn = (isNight && totalShift > 0)
-      ? Math.min(h / totalShift, 1) * nightH * hourly * nightRate : 0;
-    const holEarn = holInfo ? (stdEarn + otEarn + devEarn + nightEarn) * (holMul - 1) : 0;
-
-    $('d-base').textContent = `${kr(stdEarn)}  (${hStd.toFixed(1)}h / ${stdH}h)`;
-    $('d-ot').textContent = `${kr(otEarn)}  (${otH.toFixed(2)}h + 补差 ${hFill.toFixed(2)}h × ${otMul})`;
+    // 当日明细：与引擎 calcDayPay 完全同源，不再自己按工时比例另算一套
+    $('d-base').textContent = `${kr(pay.stdPay)}  (${stdH}h × 시급)`;
+    $('d-ot').textContent = `${kr(pay.otPay)}  (${otH}h × ${otMul})`;
     const dDev = $('d-dev');
-    if (dDev) dDev.textContent = `${kr(devEarn)}  (${hDev.toFixed(2)}h × ${otMul})`;
+    if (dDev) dDev.textContent = `${kr(pay.devPay)}  (${devH}h × ${otMul})`;
     $('d-night').textContent = isNight
-      ? `${kr(nightEarn)}  (${(nightH * Math.min(h / totalShift, 1)).toFixed(1)}h / ${nightH}h × ${nightRate})`
-      : '—';
-    $('d-total').textContent = kr(earned);
-    $('d-ot-rate').textContent = otMul;
+      ? `${kr(pay.nightPay)}  (${nightH}h × ${nightRate})` : '—';
     const dHol = $('d-holiday');
     if (dHol) {
-      dHol.parentElement.hidden = !holInfo;
-      if (holInfo) dHol.textContent = `${holInfo.name} × ${holMul} → +${kr(holEarn)}`;
+      dHol.parentElement.hidden = !(pay.holidayExtra > 0);
+      if (pay.holidayExtra > 0) {
+        dHol.textContent = `+${kr(pay.holidayExtra)}  (×${holMul}${pay.isHoliday ? ' ＋ 유급휴일 8h' : ''})`;
+      }
     }
+    const dAdj = $('d-adjust');
+    if (dAdj) {
+      const adjOn = pay.deductPay > 0 || pay.extraOtPay > 0;
+      dAdj.parentElement.hidden = !adjOn;
+      if (adjOn) {
+        const bits = [];
+        if (pay.deductPay > 0) bits.push(`−${kr(pay.deductPay)}（扣减 ${Math.round(pay.deductHours * 60)} 分）`);
+        if (pay.extraOtPay > 0) bits.push(`+${kr(pay.extraOtPay)}（增加 ${Math.round(pay.addHours * 60)} 分）`);
+        dAdj.textContent = bits.join('　');
+      }
+    }
+    $('d-total').textContent = kr(earned);
+    $('d-ot-rate').textContent = otMul;
 
-    // 满班日薪参考（口径说明，跟实时的已赚区分开）
-    const fullVariable = Math.round(fixH * hourly * otMul);
-    const fullDev = Math.round(devH * hourly * otMul);
-    const fullOt = Math.max(0, fullVariable - fullDev);
-    const fullBase = Math.round(stdH * hourly) + fullOt + fullDev
-      + (isNight ? Math.round(nightH * hourly * nightRate) : 0);
-    const fullDay = Math.round(fullBase * (holInfo ? holMul : 1));
+    // 满班日薪参考 = 不含登记增减、不含假日加给的三项合计
+    const fullDay = pay.stdPay + pay.otPay + pay.devPay + pay.nightPay;
     const rateNote = $('today-rate');
     if (rateNote) {
-      rateNote.textContent = `满班日薪 ${kr(fullDay)}원 = 기본 ${kr(stdH * hourly)}`
-        + ` + 연장 ${kr(fullOt)} + 개발지원 ${kr(fullDev)}`
-        + (isNight ? ` + 夜班补助 ${kr(nightH * hourly * nightRate)}` : '')
-        + (holInfo ? `，${holInfo.name} 全天 ×${holMul}` : '');
+      rateNote.textContent = `满班日薪 ${kr(fullDay)}원 = 기본 ${stdH}h ＋ 연장 ${otH}h ＋ 개발지원 ${devH}h`
+        + `（计发 ${quota.toFixed(2)}h，后两项 ×${otMul}）`
+        + (isNight ? ` ＋ 夜班补助 ${nightH}h ×${nightRate}` : '')
+        + '；一次签到即锁定，休息分钟不影响金额';
     }
-
-    // 休息分钟
-    if (rec) $('rest-value').textContent = `${rec.restMinutes} 分钟`;
-    else $('rest-value').textContent = `${s.restMinutes ?? 30} 分钟`;
     $('shift-label').textContent = isNight ? '夜班' : '白班';
   }
 
@@ -253,9 +233,6 @@
       toast(rec.shiftType === 'night' ? '🌙 已切换为夜班' : '☀️ 已切换为白班');
     };
 
-    $('rest-minus').onclick = () => adjustRest(-15);
-    $('rest-plus').onclick = () => adjustRest(15);
-
     $('auto-punch-switch').checked = st().autoPunch;
     $('auto-punch-switch').onchange = e => {
       st().autoPunch = e.target.checked; Store.save();
@@ -264,13 +241,8 @@
     };
   }
 
-  function adjustRest(delta) {
-    const ds = todayStr();
-    const rec = Store.day(ds);
-    const cur = Number(rec.restMinutes);
-    rec.restMinutes = Math.max(0, Math.min(480, (Number.isFinite(cur) ? cur : (st().restMinutes ?? 30)) + delta));
-    Store.save(); refreshToday();
-  }
+  // 休息分钟（휴게시간）只在【设置 → 교대근무】配置，作为班次窗口 / 工时显示参数；
+  // 2026-11-05 起不再出现在今日页，也不参与任何金额计算。
 
   /* ---------- 考勤页 ---------- */
   let attMonth = cur();
@@ -357,15 +329,14 @@
     $('mk-shift-day').classList.toggle('active', !isNight);
     $('mk-shift-night').classList.toggle('active', isNight);
     const w = Salary.shiftWindowFor(mkDate, isNight ? 'night' : 'day', Store.settings);
-    const restMin = (rec && rec.restMinutes != null) ? rec.restMinutes
-      : (Store.settings.restMinutes != null ? Store.settings.restMinutes : 30);
-    const start = new Date(`${mkDate}T${w.start}:00`);
-    const end = new Date(`${mkDate}T${w.end}:00`);
-    if (w.crossMidnight) end.setDate(end.getDate() + 1);
-    const hrs = ((end - start - restMin * 60000) / 3600000).toFixed(1);
+    const dp = Store.settings.dailyPay || {};
+    const stdH = Number(dp.stdHours ?? 8);
+    const otH = Number(dp.otHours ?? 2.67);
+    const devH = Number(isNight ? (dp.devNightHours ?? 0.75) : (dp.devDayHours ?? 0.67));
     $('mk-shift-info').innerHTML =
       `该日按 <b>${isNight ? '🌙 夜班' : '☀️ 白班'}</b> 计：${w.start} – ${w.crossMidnight ? '次日 ' : ''}${w.end}` +
-      `（扣休 ${restMin} 分，整班 <b>${hrs}h</b>）${w.note ? ' · ' + w.note : ''}`;
+      `（计发 <b>${(stdH + otH + devH).toFixed(2)}h</b> = 기본 ${stdH}h ＋ 연장 ${otH}h ＋ 개발지원 ${devH}h）` +
+      `${w.note ? ' · ' + w.note : ''}`;
   }
 
   function setMkShift(type) {

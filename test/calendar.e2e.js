@@ -208,7 +208,7 @@ const cellSel = d => `.cal-cell[data-date="${MONTH}-${String(d).padStart(2, '0')
   ok('面板默认白班高亮', await page.$eval('#mk-shift-day', e => e.classList.contains('active')));
   ok('明细首行显示班次', (await page.textContent('#mk-detail')).includes('白班'));
   const info0 = await page.textContent('#mk-shift-info');
-  ok('白班窗口 08:20–20:20 · 整班 11.5h', info0.includes('08:20') && info0.includes('11.5h'), info0);
+  ok('白班窗口 08:20–20:20 · 计发 11.34h', info0.includes('08:20') && info0.includes('11.34h'), info0);
   ok('留痕时间默认取班次上班时刻 08:20', (await page.inputValue('#mk-time')) === '08:20');
   await page.click('#mk-shift-night');
   await page.waitForTimeout(400);
